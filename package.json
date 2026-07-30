@@ -1,0 +1,45 @@
+{
+  "name": "context-rail",
+  "version": "0.1.0",
+  "description": "Read-only context window visualization for Oh My Pi",
+  "type": "module",
+  "license": "MIT",
+  "author": "izumi0uu",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/izumi0uu/context-rail.git"
+  },
+  "homepage": "https://github.com/izumi0uu/context-rail#readme",
+  "bugs": {
+    "url": "https://github.com/izumi0uu/context-rail/issues"
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "omp": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check": "npm run typecheck && npm test",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}
