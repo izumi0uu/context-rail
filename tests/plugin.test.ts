@@ -1,17 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import contextRailExtension from "../src/index.ts";
+import { createContextRailExtension } from "../src/index.ts";
 import type {
 	OmpEventHandler,
 	OmpEventMap,
 	OmpExtensionApi,
 	OmpExtensionContext,
 } from "../src/omp-types.ts";
+import type { RenderState } from "../src/render.ts";
 
 test("connects OMP lifecycle events to status and widget UI", async () => {
 	const handlers = new Map<keyof OmpEventMap, OmpEventHandler<keyof OmpEventMap>>();
 	let commandHandler: ((args: string, ctx: OmpExtensionContext) => Promise<void> | void) | undefined;
 	let commandName: string | undefined;
+	const publications: RenderState[] = [];
+	let viewerStops = 0;
 
 	const api = {
 		on(event: keyof OmpEventMap, handler: OmpEventHandler<keyof OmpEventMap>) {
@@ -28,6 +31,7 @@ test("connects OMP lifecycle events to status and widget UI", async () => {
 
 	const statuses: Array<string | undefined> = [];
 	const widgets: Array<string[] | undefined> = [];
+	const notifications: string[] = [];
 	const ctx: OmpExtensionContext = {
 		model: { id: "test-model" },
 		getContextUsage: () => ({ tokens: 8_000, contextWindow: 32_000, percent: 25 }),
@@ -35,10 +39,25 @@ test("connects OMP lifecycle events to status and widget UI", async () => {
 		ui: {
 			setStatus: (_key, value) => statuses.push(value),
 			setWidget: (_key, value) => widgets.push(value),
-			notify: () => undefined,
+			notify: (message) => notifications.push(message),
 		},
 	};
 
+	const contextRailExtension = createContextRailExtension({
+		startViewer: async () => ({
+			port: 4317,
+			url: "http://127.0.0.1:4317/",
+			publish: (state) =>
+				publications.push({
+					snapshot: state.snapshot,
+					phase: state.phase,
+					activeTools: [...state.activeTools],
+				}),
+			stop: async () => {
+				viewerStops += 1;
+			},
+		}),
+	});
 	contextRailExtension(api);
 	assert.equal(commandName, "context-rail");
 	assert.ok(commandHandler);
@@ -61,6 +80,10 @@ test("connects OMP lifecycle events to status and widget UI", async () => {
 		"phase: context",
 	]);
 
+	await commandHandler?.("web", ctx);
+	assert.equal(notifications.at(-1), "ContextRail viewer: http://127.0.0.1:4317/");
+	assert.equal(publications.at(-1)?.phase, "context");
+
 	await handlers.get("tool_execution_start")?.(
 		{ type: "tool_execution_start", toolCallId: "call-1", toolName: "bash" },
 		ctx,
@@ -70,4 +93,5 @@ test("connects OMP lifecycle events to status and widget UI", async () => {
 	await handlers.get("session_shutdown")?.({ type: "session_shutdown" }, ctx);
 	assert.equal(statuses.at(-1), undefined);
 	assert.equal(widgets.at(-1), undefined);
+	assert.equal(viewerStops, 1);
 });

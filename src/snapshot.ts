@@ -1,9 +1,11 @@
 export type ContextItemKind = "system" | "memory" | "user" | "assistant" | "tool" | "unknown";
 
 export interface ContextMessageLike {
+	id?: unknown;
 	role?: unknown;
 	type?: unknown;
 	customType?: unknown;
+	toolCallId?: unknown;
 	toolName?: unknown;
 }
 
@@ -58,6 +60,14 @@ function finiteNonNegative(value: number | null | undefined): number | undefined
 	return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
+function messageId(message: ContextMessageLike, index: number): string {
+	const intrinsicId = message.id ?? message.toolCallId;
+	if (typeof intrinsicId === "string" || typeof intrinsicId === "number") {
+		return `message-${String(intrinsicId).slice(0, 128)}`;
+	}
+	return `message-${index}`;
+}
+
 export function createSnapshot(options: CreateSnapshotOptions): ContextSnapshot {
 	const tokens = finiteNonNegative(options.usage?.tokens);
 	const contextWindow = finiteNonNegative(options.usage?.contextWindow);
@@ -75,7 +85,7 @@ export function createSnapshot(options: CreateSnapshotOptions): ContextSnapshot 
 	for (const [index, message] of options.messages.entries()) {
 		const toolName = typeof message.toolName === "string" ? message.toolName : undefined;
 		items.push({
-			id: `message-${index}`,
+			id: messageId(message, index),
 			kind: classifyMessage(message),
 			...(toolName ? { toolName } : {}),
 		});

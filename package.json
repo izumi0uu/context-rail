@@ -1,7 +1,7 @@
 {
   "name": "context-rail",
   "version": "0.1.0",
-  "description": "Read-only context window visualization for Oh My Pi",
+  "description": "Live, read-only context window visualization for Oh My Pi",
   "type": "module",
   "license": "MIT",
   "author": "izumi0uu",
@@ -16,6 +16,7 @@
   "files": [
     "dist",
     "src",
+    "web",
     "README.md",
     "LICENSE"
   ],
@@ -33,6 +34,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "check": "npm run typecheck && npm test",
+    "preview": "node --experimental-strip-types src/preview.ts",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
@@ -40,6 +42,7 @@
     "node": ">=22"
   },
   "devDependencies": {
+    "@types/node": "^26.1.2",
     "typescript": "^6.0.3"
   }
 }

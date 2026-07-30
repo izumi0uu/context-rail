@@ -48,3 +48,14 @@ test("ignores invalid usage values", () => {
 	assert.equal(result.contextWindow, undefined);
 	assert.equal(result.percent, undefined);
 });
+
+test("prefers intrinsic message identifiers for stable live updates", () => {
+	const result = createSnapshot({
+		messages: [{ id: "turn-42", role: "assistant" }, { toolCallId: 19, role: "toolResult" }],
+		now: 1,
+	});
+	assert.deepEqual(
+		result.items.map((item) => item.id),
+		["message-turn-42", "message-19"],
+	);
+});

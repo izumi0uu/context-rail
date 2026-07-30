@@ -1,0 +1,1003 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>ContextRail</title>
+<style>
+  :root {
+    --canvas: #f7f8f6;
+    --surface: #ffffff;
+    --ink: #1d1f23;
+    --muted: #686d75;
+    --quiet: #9ba0a8;
+    --hair: #dfe2dc;
+    --indigo: #574ce3;
+    --green: #4e8a35;
+    --teal: #087b75;
+    --amber: #a36f26;
+    --danger: #b54545;
+    --shadow: 0 8px 22px rgba(36, 39, 43, 0.08);
+    --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+    background: var(--canvas);
+    color: var(--ink);
+    font-family: var(--sans);
+    letter-spacing: 0;
+  }
+
+  button { font: inherit; letter-spacing: 0; }
+
+  #viewport {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+    touch-action: none;
+    cursor: grab;
+  }
+
+  #viewport.dragging { cursor: grabbing; }
+
+  #world {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100px;
+    height: 100px;
+    transform-origin: 0 0;
+    will-change: transform;
+  }
+
+  #edge-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    overflow: visible;
+    pointer-events: none;
+  }
+
+  #window-frame {
+    fill: rgba(255, 255, 255, 0.24);
+    stroke: var(--indigo);
+    stroke-width: 2;
+    stroke-dasharray: 8 7;
+    opacity: 0.72;
+  }
+
+  body[data-phase="compacting"] #window-frame {
+    stroke: var(--green);
+    stroke-dasharray: 4 5;
+  }
+
+  .edge {
+    fill: none;
+    stroke: #c7cbc4;
+    stroke-width: 1.6;
+    opacity: 0.68;
+    transition: opacity 280ms ease;
+  }
+
+  .edge.pending { opacity: 0; }
+
+  .node {
+    position: absolute;
+    width: 176px;
+    min-height: 92px;
+    border: 1.5px solid var(--node-color, var(--hair));
+    border-radius: 8px;
+    padding: 13px 14px 12px;
+    background: rgba(255, 255, 255, 0.96);
+    color: var(--ink);
+    text-align: left;
+    box-shadow: var(--shadow);
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+    opacity: 0;
+    transform-origin: center;
+    will-change: transform, opacity;
+  }
+
+  .node:hover,
+  .node:focus-visible {
+    border-width: 2px;
+    outline: none;
+  }
+
+  .node::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 13px;
+    width: 28px;
+    height: 3px;
+    background: var(--node-color, var(--quiet));
+  }
+
+  .node-kind {
+    display: block;
+    color: var(--node-color, var(--quiet));
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 1.3;
+    text-transform: uppercase;
+  }
+
+  .node-title {
+    display: block;
+    margin-top: 9px;
+    color: var(--ink);
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1.18;
+  }
+
+  .node-detail {
+    display: block;
+    margin-top: 7px;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 10px;
+    line-height: 1.35;
+  }
+
+  .node.aggregate {
+    border-style: dashed;
+    background: rgba(247, 248, 246, 0.96);
+    box-shadow: none;
+  }
+
+  #topbar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 20;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 18px;
+    padding: 18px 22px;
+    pointer-events: none;
+  }
+
+  #brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  #brand-name {
+    font-size: 14px;
+    font-weight: 760;
+    line-height: 1;
+  }
+
+  #connection {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 10px;
+    line-height: 1;
+  }
+
+  #connection-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--amber);
+  }
+
+  #connection[data-state="live"] #connection-dot { background: var(--green); }
+  #connection[data-state="offline"] #connection-dot { background: var(--danger); }
+
+  #model {
+    max-width: min(48vw, 480px);
+    overflow: hidden;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 10px;
+    line-height: 1.35;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  #legend {
+    position: fixed;
+    top: 52px;
+    left: 22px;
+    z-index: 20;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+    max-width: min(620px, calc(100vw - 44px));
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 9px;
+    line-height: 1;
+    pointer-events: none;
+  }
+
+  .legend-item { display: inline-flex; align-items: center; gap: 5px; }
+  .legend-item i { width: 7px; height: 7px; border-radius: 50%; background: var(--legend-color); }
+
+  #toolbar {
+    position: fixed;
+    right: 22px;
+    bottom: 86px;
+    z-index: 25;
+    display: flex;
+    align-items: center;
+    padding: 3px;
+    border: 1px solid var(--hair);
+    border-radius: 7px;
+    background: rgba(255, 255, 255, 0.94);
+    box-shadow: 0 3px 12px rgba(36, 39, 43, 0.07);
+  }
+
+  #toolbar button {
+    min-width: 68px;
+    height: 32px;
+    border: 0;
+    border-radius: 5px;
+    padding: 0 11px;
+    background: transparent;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 10px;
+    cursor: pointer;
+  }
+
+  #toolbar button:hover { color: var(--indigo); }
+  #toolbar button[aria-pressed="true"] { background: var(--ink); color: #fff; }
+  #toolbar #fit-view { min-width: 44px; border-left: 1px solid var(--hair); border-radius: 0; }
+
+  #empty-state {
+    position: fixed;
+    inset: 0;
+    z-index: 5;
+    display: grid;
+    place-items: center;
+    color: var(--quiet);
+    font-family: var(--mono);
+    font-size: 11px;
+    pointer-events: none;
+    transition: opacity 240ms ease;
+  }
+
+  #empty-state.hidden { opacity: 0; }
+
+  #tooltip {
+    position: fixed;
+    z-index: 40;
+    max-width: 250px;
+    padding: 9px 11px;
+    border-radius: 6px;
+    background: var(--ink);
+    color: #fff;
+    font-family: var(--mono);
+    font-size: 10px;
+    line-height: 1.5;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 140ms ease;
+    white-space: pre-line;
+  }
+
+  #tooltip.visible { opacity: 0.96; }
+
+  #statusbar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 20;
+    display: grid;
+    grid-template-columns: minmax(220px, 1fr) auto auto;
+    align-items: center;
+    gap: 28px;
+    min-height: 64px;
+    padding: 12px 22px;
+    border-top: 1px solid var(--hair);
+    background: rgba(255, 255, 255, 0.92);
+    backdrop-filter: blur(12px);
+  }
+
+  #usage-wrap { min-width: 0; }
+
+  .status-label {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 9px;
+    line-height: 1;
+  }
+
+  #usage-value { color: var(--ink); }
+
+  #usage-track {
+    width: 100%;
+    height: 4px;
+    margin-top: 9px;
+    overflow: hidden;
+    background: #e5e7e2;
+  }
+
+  #usage-fill {
+    width: 0;
+    height: 100%;
+    background: var(--indigo);
+    transition: width 500ms cubic-bezier(0.2, 0.7, 0.2, 1), background 240ms ease;
+  }
+
+  #usage-fill[data-level="high"] { background: var(--amber); }
+  #usage-fill[data-level="critical"] { background: var(--danger); }
+
+  .stat {
+    min-width: 82px;
+    text-align: right;
+  }
+
+  .stat strong {
+    display: block;
+    color: var(--ink);
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 650;
+    line-height: 1.1;
+  }
+
+  .stat span {
+    display: block;
+    margin-top: 5px;
+    color: var(--quiet);
+    font-family: var(--mono);
+    font-size: 9px;
+    line-height: 1;
+    text-transform: uppercase;
+  }
+
+  @media (max-width: 720px) {
+    #topbar { padding: 16px; }
+    #legend { top: 48px; left: 16px; gap: 7px 10px; }
+    #model { max-width: 42vw; }
+    #toolbar { right: 14px; bottom: 112px; }
+    #toolbar button { min-width: 62px; padding: 0 8px; }
+    #statusbar {
+      grid-template-columns: 1fr auto;
+      gap: 10px 16px;
+      min-height: 92px;
+      padding: 12px 16px;
+    }
+    #usage-wrap { grid-column: 1 / -1; }
+    .stat { min-width: 0; text-align: left; }
+    .stat:last-child { text-align: right; }
+    .node { width: 164px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; }
+  }
+</style>
+</head>
+<body data-phase="idle">
+<div id="viewport" aria-label="Context graph canvas">
+  <div id="world">
+    <svg id="edge-layer" width="100" height="100" aria-hidden="true">
+      <rect id="window-frame" x="0" y="0" width="0" height="0" rx="8"></rect>
+      <g id="edges"></g>
+    </svg>
+  </div>
+</div>
+
+<header id="topbar">
+  <div id="brand">
+    <span id="brand-name">ContextRail</span>
+    <span id="connection" data-state="waiting" aria-live="polite">
+      <i id="connection-dot"></i>
+      <span id="connection-label">waiting</span>
+    </span>
+  </div>
+  <div id="model">no model</div>
+</header>
+
+<div id="legend" aria-label="Context roles">
+  <span class="legend-item" style="--legend-color:#1d1f23"><i></i>system</span>
+  <span class="legend-item" style="--legend-color:#4e8a35"><i></i>memory</span>
+  <span class="legend-item" style="--legend-color:#574ce3"><i></i>user</span>
+  <span class="legend-item" style="--legend-color:#087b75"><i></i>assistant</span>
+  <span class="legend-item" style="--legend-color:#a36f26"><i></i>tool</span>
+</div>
+
+<div id="toolbar" role="group" aria-label="Graph view">
+  <button id="window-mode" type="button" aria-pressed="true">Window</button>
+  <button id="overview-mode" type="button" aria-pressed="false">Overview</button>
+  <button id="fit-view" type="button" title="Fit graph to view">Fit</button>
+</div>
+
+<div id="empty-state">waiting for context</div>
+<div id="tooltip" role="tooltip"></div>
+
+<footer id="statusbar">
+  <div id="usage-wrap">
+    <div class="status-label"><span>context usage</span><span id="usage-value">? / ?</span></div>
+    <div id="usage-track" role="progressbar" aria-label="Context usage" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+      <div id="usage-fill"></div>
+    </div>
+  </div>
+  <div class="stat"><strong id="item-count">0</strong><span>items</span></div>
+  <div class="stat"><strong id="phase">idle</strong><span>phase</span></div>
+</footer>
+
+<script>
+"use strict";
+
+/* Interaction model adapted from graph-deck by Yohei Nakajima. */
+
+const $ = (selector) => document.querySelector(selector);
+const viewport = $("#viewport");
+const world = $("#world");
+const edgeLayer = $("#edge-layer");
+const edgeGroup = $("#edges");
+const windowFrame = $("#window-frame");
+const tooltip = $("#tooltip");
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+const kindMeta = {
+  system: { label: "System", color: "#1d1f23", lane: -54 },
+  memory: { label: "Memory", color: "#4e8a35", lane: 54 },
+  user: { label: "User", color: "#574ce3", lane: -25 },
+  assistant: { label: "Assistant", color: "#087b75", lane: 28 },
+  tool: { label: "Tool", color: "#a36f26", lane: 68 },
+  unknown: { label: "Context", color: "#7b8087", lane: 0 },
+};
+
+const nodes = new Map();
+const edges = new Map();
+let currentPayload = null;
+let viewMode = "window";
+let freeCamera = false;
+let frameTick = 0;
+let hoveredNode = null;
+let camera = { x: 500, y: 420, scale: 0.8 };
+let cameraTarget = { x: 500, y: 420, scale: 0.8 };
+let frameBox = { x: 180, y: 220, width: 640, height: 360 };
+let frameTarget = { ...frameBox };
+
+function formatTokens(value) {
+  if (!Number.isFinite(value)) return "?";
+  if (value >= 1000000) return `${(value / 1000000).toFixed(1)}m`;
+  if (value >= 1000) return `${(value / 1000).toFixed(1)}k`;
+  return String(Math.round(value));
+}
+
+function setConnection(state, label) {
+  const connection = $("#connection");
+  connection.dataset.state = state;
+  $("#connection-label").textContent = label;
+}
+
+function itemKey(item) {
+  if (item.aggregate) return "earlier-context";
+  return `${String(item.id)}:${String(item.kind)}:${item.toolName || ""}`;
+}
+
+function windowItems(items) {
+  const maxItems = innerWidth < 720 ? 4 : 7;
+  if (items.length <= maxItems) return items.map((item) => ({ ...item }));
+
+  const head = items[0] && items[0].kind === "system" ? [{ ...items[0] }] : [];
+  const minimumTail = innerWidth < 720 ? 2 : 3;
+  const tailCount = Math.max(minimumTail, maxItems - head.length - 1);
+  const hiddenCount = items.length - head.length - tailCount;
+  const aggregate = {
+    id: "earlier-context",
+    kind: "unknown",
+    aggregate: true,
+    aggregateCount: hiddenCount,
+  };
+  return [...head, aggregate, ...items.slice(-tailCount).map((item) => ({ ...item }))];
+}
+
+function displayItems(items) {
+  return viewMode === "overview"
+    ? items.map((item) => ({ ...item }))
+    : windowItems(items);
+}
+
+function nodeText(item, index) {
+  if (item.aggregate) {
+    return {
+      kind: "Active context",
+      title: `${item.aggregateCount} earlier items`,
+      detail: "retained in model context",
+    };
+  }
+  const meta = kindMeta[item.kind] || kindMeta.unknown;
+  return {
+    kind: meta.label,
+    title: item.toolName || meta.label,
+    detail: item.toolName ? `tool result - item ${index + 1}` : `context item ${index + 1}`,
+  };
+}
+
+function createNode(item, index, target) {
+  const meta = kindMeta[item.kind] || kindMeta.unknown;
+  const element = document.createElement("button");
+  element.type = "button";
+  element.className = `node${item.aggregate ? " aggregate" : ""}`;
+  element.style.setProperty("--node-color", meta.color);
+
+  const kind = document.createElement("span");
+  kind.className = "node-kind";
+  const title = document.createElement("span");
+  title.className = "node-title";
+  const detail = document.createElement("span");
+  detail.className = "node-detail";
+  element.append(kind, title, detail);
+  world.appendChild(element);
+
+  const node = {
+    key: itemKey(item), item, index, element, kind, title, detail,
+    x: target.x + (viewMode === "window" ? 180 : 0),
+    y: target.y + 20,
+    targetX: target.x,
+    targetY: target.y,
+    width: element.offsetWidth || 176,
+    height: element.offsetHeight || 92,
+    opacity: 0,
+    targetOpacity: 1,
+    floatPhase: index * 1.83,
+    dragX: 0,
+    dragY: 0,
+    dragging: false,
+    removeTimer: null,
+  };
+
+  attachNodeInteraction(node);
+  updateNodeContent(node, item, index);
+  return node;
+}
+
+function updateNodeContent(node, item, index) {
+  const meta = kindMeta[item.kind] || kindMeta.unknown;
+  const text = nodeText(item, index);
+  node.item = item;
+  node.index = index;
+  node.element.style.setProperty("--node-color", meta.color);
+  node.kind.textContent = text.kind;
+  node.title.textContent = text.title;
+  node.detail.textContent = text.detail;
+  node.element.setAttribute("aria-label", `${text.kind}: ${text.title}, ${text.detail}`);
+}
+
+function layoutFor(items, index) {
+  const item = items[index];
+  const meta = kindMeta[item.kind] || kindMeta.unknown;
+  if (viewMode === "overview") {
+    const columns = Math.max(3, Math.min(8, Math.ceil(Math.sqrt(items.length * 1.7))));
+    const row = Math.floor(index / columns);
+    const offset = index % columns;
+    const column = row % 2 === 0 ? offset : columns - 1 - offset;
+    return { x: 250 + column * 228, y: 270 + row * 158 };
+  }
+  if (innerWidth < 720) {
+    return {
+      x: 360,
+      y: 260 + index * 136 + meta.lane * 0.08,
+    };
+  }
+  return {
+    x: 250 + index * 224,
+    y: 410 + meta.lane + Math.sin(index * 1.4) * 12,
+  };
+}
+
+function reconcileNodes(items) {
+  const wanted = new Set();
+  items.forEach((item, index) => {
+    const key = itemKey(item);
+    wanted.add(key);
+    const target = layoutFor(items, index);
+    let node = nodes.get(key);
+    if (!node) {
+      node = createNode(item, index, target);
+      nodes.set(key, node);
+      requestAnimationFrame(() => { node.targetOpacity = 1; });
+    } else {
+      if (node.removeTimer) clearTimeout(node.removeTimer);
+      node.removeTimer = null;
+      node.targetOpacity = 1;
+      node.element.removeAttribute("aria-hidden");
+      node.element.tabIndex = 0;
+      updateNodeContent(node, item, index);
+    }
+    node.targetX = target.x;
+    node.targetY = target.y;
+    world.appendChild(node.element);
+  });
+
+  for (const [key, node] of nodes) {
+    if (wanted.has(key) || node.removeTimer) continue;
+    node.targetOpacity = 0;
+    node.targetX -= 170;
+    node.targetY += 34;
+    node.element.setAttribute("aria-hidden", "true");
+    node.element.tabIndex = -1;
+    node.removeTimer = setTimeout(() => {
+      node.element.remove();
+      nodes.delete(key);
+    }, reducedMotion ? 20 : 720);
+  }
+
+  reconcileEdges(items.map(itemKey));
+  updateBounds(items);
+}
+
+function reconcileEdges(keys) {
+  const desired = new Set();
+  for (let index = 1; index < keys.length; index += 1) {
+    const from = keys[index - 1];
+    const to = keys[index];
+    const key = `${from}->${to}`;
+    desired.add(key);
+    if (edges.has(key)) continue;
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("class", "edge pending");
+    edgeGroup.appendChild(path);
+    edges.set(key, { key, from, to, path });
+    requestAnimationFrame(() => path.classList.remove("pending"));
+  }
+
+  for (const [key, edge] of edges) {
+    if (desired.has(key)) continue;
+    edge.path.classList.add("pending");
+    setTimeout(() => edge.path.remove(), reducedMotion ? 20 : 280);
+    edges.delete(key);
+  }
+}
+
+function updateBounds(items) {
+  if (!items.length) return;
+  const positions = items.map((_, index) => layoutFor(items, index));
+  const minX = Math.min(...positions.map((point) => point.x)) - 122;
+  const maxX = Math.max(...positions.map((point) => point.x)) + 122;
+  const minY = Math.min(...positions.map((point) => point.y)) - 104;
+  const maxY = Math.max(...positions.map((point) => point.y)) + 104;
+  frameTarget = { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+
+  const worldWidth = Math.max(1000, maxX + 260);
+  const worldHeight = Math.max(800, maxY + 240);
+  world.style.width = `${worldWidth}px`;
+  world.style.height = `${worldHeight}px`;
+  edgeLayer.setAttribute("width", String(worldWidth));
+  edgeLayer.setAttribute("height", String(worldHeight));
+  if (!freeCamera) fitView(false);
+}
+
+function fitView(reset = true) {
+  if (reset) freeCamera = false;
+  const availableWidth = innerWidth - 48;
+  const availableHeight = innerHeight - (innerWidth < 720 ? 190 : 150);
+  const scale = Math.min(
+    availableWidth / Math.max(320, frameTarget.width + 100),
+    availableHeight / Math.max(260, frameTarget.height + 100),
+    1.12,
+  );
+  cameraTarget = {
+    x: frameTarget.x + frameTarget.width / 2,
+    y: frameTarget.y + frameTarget.height / 2 + 8,
+    scale: Math.max(0.16, scale),
+  };
+  if (reducedMotion) camera = { ...cameraTarget };
+}
+
+function borderPoint(node, targetX, targetY) {
+  const dx = targetX - node.renderX;
+  const dy = targetY - node.renderY;
+  if (!dx && !dy) return [node.renderX, node.renderY];
+  const halfWidth = node.width / 2 + 6;
+  const halfHeight = node.height / 2 + 6;
+  const scale = Math.min(
+    dx ? halfWidth / Math.abs(dx) : Number.POSITIVE_INFINITY,
+    dy ? halfHeight / Math.abs(dy) : Number.POSITIVE_INFINITY,
+    1,
+  );
+  return [node.renderX + dx * scale, node.renderY + dy * scale];
+}
+
+function renderFrame(time) {
+  const ease = reducedMotion ? 1 : 0.085;
+  camera.x += (cameraTarget.x - camera.x) * ease;
+  camera.y += (cameraTarget.y - camera.y) * ease;
+  camera.scale += (cameraTarget.scale - camera.scale) * ease;
+
+  const usableHeight = innerHeight - (innerWidth < 720 ? 92 : 64);
+  world.style.transform = `translate(${innerWidth / 2 - camera.x * camera.scale}px, ${usableHeight / 2 - camera.y * camera.scale}px) scale(${camera.scale})`;
+
+  frameBox.x += (frameTarget.x - frameBox.x) * ease;
+  frameBox.y += (frameTarget.y - frameBox.y) * ease;
+  frameBox.width += (frameTarget.width - frameBox.width) * ease;
+  frameBox.height += (frameTarget.height - frameBox.height) * ease;
+  windowFrame.setAttribute("x", String(frameBox.x));
+  windowFrame.setAttribute("y", String(frameBox.y));
+  windowFrame.setAttribute("width", String(frameBox.width));
+  windowFrame.setAttribute("height", String(frameBox.height));
+
+  for (const node of nodes.values()) {
+    node.x += (node.targetX - node.x) * ease;
+    node.y += (node.targetY - node.y) * ease;
+    node.opacity += (node.targetOpacity - node.opacity) * (reducedMotion ? 1 : 0.12);
+    if (!node.dragging) {
+      node.dragX *= reducedMotion ? 0 : 0.88;
+      node.dragY *= reducedMotion ? 0 : 0.88;
+    }
+    const floatX = reducedMotion ? 0 : Math.sin(time * 0.00055 + node.floatPhase) * 3.5;
+    const floatY = reducedMotion ? 0 : Math.cos(time * 0.00045 + node.floatPhase * 1.4) * 3.5;
+    node.renderX = node.x + node.dragX + floatX;
+    node.renderY = node.y + node.dragY + floatY;
+    node.element.style.opacity = String(node.opacity);
+    node.element.style.transform = `translate(${node.renderX - node.width / 2}px, ${node.renderY - node.height / 2}px)`;
+  }
+
+  if (hoveredNode) positionTooltip(hoveredNode);
+
+  frameTick += 1;
+  if (frameTick % 2 === 0) {
+    for (const edge of edges.values()) {
+      const from = nodes.get(edge.from);
+      const to = nodes.get(edge.to);
+      if (!from || !to || from.renderX === undefined || to.renderX === undefined) continue;
+      const [startX, startY] = borderPoint(from, to.renderX, to.renderY);
+      const [endX, endY] = borderPoint(to, from.renderX, from.renderY);
+      const midX = (startX + endX) / 2;
+      const curve = (from.index % 2 === 0 ? -1 : 1) * 18;
+      edge.path.setAttribute("d", `M ${startX} ${startY} Q ${midX} ${(startY + endY) / 2 + curve} ${endX} ${endY}`);
+    }
+  }
+
+  requestAnimationFrame(renderFrame);
+}
+
+function attachNodeInteraction(node) {
+  let drag = null;
+  node.element.addEventListener("pointerdown", (event) => {
+    event.stopPropagation();
+    drag = { x: event.clientX, y: event.clientY, originX: node.dragX, originY: node.dragY };
+    node.dragging = true;
+    try { node.element.setPointerCapture(event.pointerId); } catch (_) {}
+  });
+  node.element.addEventListener("pointermove", (event) => {
+    if (!drag) return;
+    node.dragX = drag.originX + (event.clientX - drag.x) / camera.scale;
+    node.dragY = drag.originY + (event.clientY - drag.y) / camera.scale;
+  });
+  const release = () => { drag = null; node.dragging = false; };
+  node.element.addEventListener("pointerup", release);
+  node.element.addEventListener("pointercancel", release);
+  node.element.addEventListener("pointerenter", () => showTooltip(node));
+  node.element.addEventListener("pointerleave", hideTooltip);
+  node.element.addEventListener("focus", () => showTooltip(node));
+  node.element.addEventListener("blur", hideTooltip);
+}
+
+function tooltipText(node) {
+  const text = nodeText(node.item, node.index);
+  return `${text.kind}\n${text.detail}`;
+}
+
+function showTooltip(node) {
+  hoveredNode = node;
+  tooltip.textContent = tooltipText(node);
+  tooltip.classList.add("visible");
+  positionTooltip(node);
+}
+
+function positionTooltip(node) {
+  const bounds = node.element.getBoundingClientRect();
+  const width = tooltip.offsetWidth;
+  const height = tooltip.offsetHeight;
+  let left = bounds.left + bounds.width / 2 - width / 2;
+  let top = bounds.top - height - 10;
+  left = Math.max(10, Math.min(innerWidth - width - 10, left));
+  if (top < 10) top = bounds.bottom + 10;
+  tooltip.style.left = `${left}px`;
+  tooltip.style.top = `${top}px`;
+}
+
+function hideTooltip() {
+  hoveredNode = null;
+  tooltip.classList.remove("visible");
+}
+
+const touches = new Map();
+let pan = null;
+let pinch = null;
+
+viewport.addEventListener("pointerdown", (event) => {
+  hideTooltip();
+  touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  if (touches.size === 1) {
+    pan = { x: event.clientX, y: event.clientY, cameraX: camera.x, cameraY: camera.y };
+  } else if (touches.size === 2) {
+    pan = null;
+    const [a, b] = [...touches.values()];
+    const middle = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    pinch = {
+      distance: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+      scale: camera.scale,
+      worldX: camera.x + (middle.x - innerWidth / 2) / camera.scale,
+      worldY: camera.y + (middle.y - innerHeight / 2) / camera.scale,
+    };
+  }
+  viewport.classList.add("dragging");
+  try { viewport.setPointerCapture(event.pointerId); } catch (_) {}
+});
+
+viewport.addEventListener("pointermove", (event) => {
+  if (!touches.has(event.pointerId)) return;
+  touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  if (pinch && touches.size >= 2) {
+    freeCamera = true;
+    const [a, b] = [...touches.values()];
+    const middle = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    const distance = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+    camera.scale = Math.min(2.4, Math.max(0.12, pinch.scale * distance / pinch.distance));
+    camera.x = pinch.worldX - (middle.x - innerWidth / 2) / camera.scale;
+    camera.y = pinch.worldY - (middle.y - innerHeight / 2) / camera.scale;
+    cameraTarget = { ...camera };
+    return;
+  }
+  if (!pan) return;
+  const deltaX = event.clientX - pan.x;
+  const deltaY = event.clientY - pan.y;
+  if (Math.abs(deltaX) + Math.abs(deltaY) > 3) freeCamera = true;
+  if (freeCamera) {
+    camera.x = pan.cameraX - deltaX / camera.scale;
+    camera.y = pan.cameraY - deltaY / camera.scale;
+    cameraTarget = { ...camera };
+  }
+});
+
+function endPointer(event) {
+  touches.delete(event.pointerId);
+  if (touches.size < 2) pinch = null;
+  if (touches.size === 1) {
+    const [point] = [...touches.values()];
+    pan = { x: point.x, y: point.y, cameraX: camera.x, cameraY: camera.y };
+  } else if (touches.size === 0) {
+    pan = null;
+    viewport.classList.remove("dragging");
+  }
+}
+
+viewport.addEventListener("pointerup", endPointer);
+viewport.addEventListener("pointercancel", endPointer);
+viewport.addEventListener("wheel", (event) => {
+  event.preventDefault();
+  freeCamera = true;
+  const factor = Math.exp(-event.deltaY * 0.0012);
+  const worldX = camera.x + (event.clientX - innerWidth / 2) / camera.scale;
+  const worldY = camera.y + (event.clientY - innerHeight / 2) / camera.scale;
+  camera.scale = Math.min(2.4, Math.max(0.12, camera.scale * factor));
+  camera.x = worldX - (event.clientX - innerWidth / 2) / camera.scale;
+  camera.y = worldY - (event.clientY - innerHeight / 2) / camera.scale;
+  cameraTarget = { ...camera };
+}, { passive: false });
+
+function updateChrome(payload) {
+  const snapshot = payload.snapshot;
+  document.body.dataset.phase = payload.phase || "idle";
+  $("#phase").textContent = payload.activeTools && payload.activeTools.length
+    ? payload.activeTools.join(", ")
+    : payload.phase || "idle";
+  $("#model").textContent = snapshot && snapshot.model ? snapshot.model : "no model";
+  $("#item-count").textContent = snapshot ? String(snapshot.items.length) : "0";
+
+  const percent = snapshot && Number.isFinite(snapshot.percent) ? Math.min(100, snapshot.percent) : 0;
+  const fill = $("#usage-fill");
+  fill.style.width = `${percent}%`;
+  fill.dataset.level = percent >= 90 ? "critical" : percent >= 72 ? "high" : "normal";
+  $("#usage-track").setAttribute("aria-valuenow", String(Math.round(percent)));
+  $("#usage-value").textContent = snapshot
+    ? `${formatTokens(snapshot.tokens)} / ${formatTokens(snapshot.contextWindow)} - ${Math.round(percent)}%`
+    : "? / ?";
+}
+
+function applyPayload(payload) {
+  currentPayload = payload;
+  updateChrome(payload);
+  const items = payload.snapshot && Array.isArray(payload.snapshot.items) ? payload.snapshot.items : [];
+  $("#empty-state").classList.toggle("hidden", items.length > 0);
+  reconcileNodes(displayItems(items));
+}
+
+function setMode(mode) {
+  viewMode = mode;
+  $("#window-mode").setAttribute("aria-pressed", String(mode === "window"));
+  $("#overview-mode").setAttribute("aria-pressed", String(mode === "overview"));
+  freeCamera = false;
+  if (currentPayload) applyPayload(currentPayload);
+}
+
+$("#window-mode").addEventListener("click", () => setMode("window"));
+$("#overview-mode").addEventListener("click", () => setMode("overview"));
+$("#fit-view").addEventListener("click", () => fitView(true));
+addEventListener("resize", () => {
+  if (currentPayload) applyPayload(currentPayload);
+  if (!freeCamera) fitView(false);
+});
+
+function demoPayload() {
+  const kinds = ["system", "user", "assistant", "tool", "assistant", "user", "assistant", "tool", "memory", "user", "assistant", "tool", "assistant", "user", "assistant"];
+  return {
+    sequence: 1,
+    publishedAt: Date.now(),
+    phase: "context",
+    activeTools: [],
+    snapshot: {
+      createdAt: Date.now(),
+      model: "claude-sonnet-4.5",
+      tokens: 78240,
+      contextWindow: 200000,
+      percent: 39.12,
+      items: kinds.map((kind, index) => ({
+        id: kind === "system" ? "system-prompt" : `message-${index}`,
+        kind,
+        ...(kind === "tool" ? { toolName: index === 3 ? "read" : index === 7 ? "bash" : "search" } : {}),
+      })),
+    },
+  };
+}
+
+const query = new URLSearchParams(location.search);
+if (query.get("demo") === "1") {
+  setConnection("live", "demo");
+  applyPayload(demoPayload());
+} else {
+  const source = new EventSource("/events");
+  source.addEventListener("open", () => setConnection("live", "live"));
+  source.addEventListener("snapshot", (event) => {
+    try {
+      applyPayload(JSON.parse(event.data));
+      setConnection("live", "live");
+    } catch (_) {
+      setConnection("offline", "invalid data");
+    }
+  });
+  source.addEventListener("error", () => setConnection("offline", "reconnecting"));
+}
+
+globalThis.__contextRail = {
+  diagnostics: () => ({
+    connected: $("#connection").dataset.state,
+    mode: viewMode,
+    nodes: [...nodes.keys()],
+    edges: edges.size,
+    phase: document.body.dataset.phase,
+    frame: { ...frameTarget },
+  }),
+};
+
+requestAnimationFrame(renderFrame);
+</script>
+</body>
+</html>
