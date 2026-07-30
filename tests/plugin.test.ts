@@ -50,6 +50,7 @@ test("connects OMP lifecycle events to status and widget UI", async () => {
 			publish: (state) =>
 				publications.push({
 					snapshot: state.snapshot,
+					timeline: state.timeline,
 					phase: state.phase,
 					activeTools: [...state.activeTools],
 				}),
@@ -83,12 +84,31 @@ test("connects OMP lifecycle events to status and widget UI", async () => {
 	await commandHandler?.("web", ctx);
 	assert.equal(notifications.at(-1), "ContextRail viewer: http://127.0.0.1:4317/");
 	assert.equal(publications.at(-1)?.phase, "context");
+	assert.equal(publications.at(-1)?.timeline?.history.length, 4);
+	assert.deepEqual(publications.at(-1)?.timeline?.activeIds, [
+		"system-prompt",
+		"message-fallback-1",
+		"message-fallback-2",
+		"message-fallback-3",
+	]);
 
 	await handlers.get("tool_execution_start")?.(
 		{ type: "tool_execution_start", toolCallId: "call-1", toolName: "bash" },
 		ctx,
 	);
 	assert.match(statuses.at(-1) ?? "", /1 tool$/);
+
+	await handlers.get("auto_compaction_start")?.({ type: "auto_compaction_start" }, ctx);
+	await handlers.get("auto_compaction_end")?.({ type: "auto_compaction_end" }, ctx);
+	await handlers.get("context")?.(
+		{ type: "context", messages: [{ role: "assistant" }] },
+		ctx,
+	);
+	assert.ok(publications.at(-1)?.timeline?.history.some((item) => item.synthetic));
+	assert.ok((publications.at(-1)?.timeline?.summaryEdges.length ?? 0) >= 3);
+
+	await handlers.get("session_switch")?.({ type: "session_switch" }, ctx);
+	assert.equal(publications.at(-1)?.timeline?.history.length, 0);
 
 	await handlers.get("session_shutdown")?.({ type: "session_shutdown" }, ctx);
 	assert.equal(statuses.at(-1), undefined);

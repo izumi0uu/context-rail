@@ -1,4 +1,5 @@
 import type { ContextItem, ContextItemKind, ContextSnapshot } from "./snapshot.ts";
+import type { ContextTimelineSnapshot } from "./timeline.ts";
 
 const ITEM_LABELS: Record<ContextItemKind, string> = {
 	system: "SYS",
@@ -11,6 +12,7 @@ const ITEM_LABELS: Record<ContextItemKind, string> = {
 
 export interface RenderState {
 	snapshot: ContextSnapshot | undefined;
+	timeline?: ContextTimelineSnapshot;
 	phase: "idle" | "context" | "tool" | "compacting";
 	activeTools: readonly string[];
 }

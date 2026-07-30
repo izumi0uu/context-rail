@@ -1,38 +1,44 @@
 import { startContextRailServer } from "./server.ts";
 import type { ContextItem, ContextItemKind } from "./snapshot.ts";
+import { ContextTimeline } from "./timeline.ts";
 
 const viewer = await startContextRailServer();
 const contextWindow = 200_000;
 const kinds: ContextItemKind[] = ["user", "assistant", "tool", "assistant"];
 let turn = 0;
+let compacting = false;
 let items: ContextItem[] = [
 	{ id: "system-prompt", kind: "system" },
 	{ id: "message-seed-user", kind: "user" },
 	{ id: "message-seed-assistant", kind: "assistant" },
 ];
+const timeline = new ContextTimeline();
 
 const publish = (): void => {
-	const compacting = turn > 0 && turn % 10 === 0;
 	const activeTool = turn % 4 === 2 ? [`tool-${turn}`] : [];
 	const tokens = Math.min(contextWindow, 18_000 + items.length * 4_200);
+	const snapshot = {
+		createdAt: Date.now(),
+		model: "context-rail-preview",
+		tokens,
+		contextWindow,
+		percent: (tokens / contextWindow) * 100,
+		items,
+	};
 	viewer.publish({
 		phase: compacting ? "compacting" : activeTool.length > 0 ? "tool" : "context",
 		activeTools: activeTool,
-		snapshot: {
-			createdAt: Date.now(),
-			model: "context-rail-preview",
-			tokens,
-			contextWindow,
-			percent: (tokens / contextWindow) * 100,
-			items,
-		},
+		snapshot,
+		timeline: timeline.apply(snapshot, { compaction: compacting }),
 	});
+	compacting = false;
 };
 
 publish();
 const timer = setInterval(() => {
 	turn += 1;
 	if (turn % 10 === 0) {
+		compacting = true;
 		items = [
 			items[0] ?? { id: "system-prompt", kind: "system" },
 			{ id: `memory-${turn}`, kind: "memory" },

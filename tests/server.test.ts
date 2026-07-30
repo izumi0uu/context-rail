@@ -14,6 +14,15 @@ test("serves the viewer and publishes the latest snapshot over SSE", async (t) =
 			model: "test-model",
 			items: [{ id: "message-1", kind: "user" }],
 		},
+		timeline: {
+			revision: 1,
+			history: [{ id: "message-1", kind: "user", order: 0, firstSeenAt: 1, lastSeenAt: 1 }],
+			activeIds: ["message-1"],
+			enteredIds: ["message-1"],
+			retainedIds: [],
+			exitedIds: [],
+			summaryEdges: [],
+		},
 	});
 
 	const page = await fetch(viewer.url);
@@ -31,6 +40,7 @@ test("serves the viewer and publishes the latest snapshot over SSE", async (t) =
 	const text = new TextDecoder().decode(chunk.value);
 	assert.match(text, /event: snapshot/);
 	assert.match(text, /"model":"test-model"/);
+	assert.match(text, /"activeIds":\["message-1"\]/);
 	await reader.cancel();
 });
 

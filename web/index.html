@@ -72,7 +72,10 @@
     stroke-width: 2;
     stroke-dasharray: 8 7;
     opacity: 0.72;
+	transition: opacity 240ms ease;
   }
+
+  body[data-mode="overview"] #window-frame { opacity: 0; }
 
   body[data-phase="compacting"] #window-frame {
     stroke: var(--green);
@@ -84,10 +87,18 @@
     stroke: #c7cbc4;
     stroke-width: 1.6;
     opacity: 0.68;
-    transition: opacity 280ms ease;
+	transition: opacity 280ms ease, stroke 280ms ease;
   }
 
   .edge.pending { opacity: 0; }
+	.edge.inactive { opacity: 0.12; }
+	.edge.summary {
+		stroke: var(--green);
+		stroke-width: 1.8;
+		stroke-dasharray: 5 5;
+		opacity: 0.58;
+	}
+	.edge.summary.inactive { opacity: 0.2; }
 
   .node {
     position: absolute;
@@ -157,6 +168,35 @@
     background: rgba(247, 248, 246, 0.96);
     box-shadow: none;
   }
+
+	.node.inactive {
+		box-shadow: none;
+		filter: grayscale(0.42) saturate(0.55);
+	}
+
+	.node.inactive::before { opacity: 0.48; }
+
+	.node.active {
+		box-shadow: 0 8px 22px rgba(36, 39, 43, 0.08), 0 0 0 3px rgba(87, 76, 227, 0.08);
+	}
+
+	.node.memory.active {
+		box-shadow: 0 8px 22px rgba(36, 39, 43, 0.08), 0 0 0 3px rgba(78, 138, 53, 0.1);
+	}
+
+	.node.entered { animation: context-enter 620ms cubic-bezier(0.2, 0.75, 0.2, 1); }
+	.node.exited { animation: context-exit 520ms ease-out; }
+
+	@keyframes context-enter {
+		0% { filter: brightness(1.18); }
+		45% { filter: brightness(1.06); }
+		100% { filter: none; }
+	}
+
+	@keyframes context-exit {
+		0% { filter: grayscale(0) saturate(1); }
+		100% { filter: grayscale(0.42) saturate(0.55); }
+	}
 
   #topbar {
     position: fixed;
@@ -398,7 +438,7 @@
   }
 </style>
 </head>
-<body data-phase="idle">
+<body data-phase="idle" data-mode="window">
 <div id="viewport" aria-label="Context graph canvas">
   <div id="world">
     <svg id="edge-layer" width="100" height="100" aria-hidden="true">
@@ -443,7 +483,7 @@
       <div id="usage-fill"></div>
     </div>
   </div>
-  <div class="stat"><strong id="item-count">0</strong><span>items</span></div>
+  <div class="stat"><strong id="item-count">0 / 0</strong><span>active / history</span></div>
   <div class="stat"><strong id="phase">idle</strong><span>phase</span></div>
 </footer>
 
@@ -476,6 +516,7 @@ let currentPayload = null;
 let viewMode = "window";
 let freeCamera = false;
 let frameTick = 0;
+let lastAnimatedRevision = -1;
 let hoveredNode = null;
 let camera = { x: 500, y: 420, scale: 0.8 };
 let cameraTarget = { x: 500, y: 420, scale: 0.8 };
@@ -496,46 +537,30 @@ function setConnection(state, label) {
 }
 
 function itemKey(item) {
-  if (item.aggregate) return "earlier-context";
-  return `${String(item.id)}:${String(item.kind)}:${item.toolName || ""}`;
+  return String(item.id);
 }
 
-function windowItems(items) {
-  const maxItems = innerWidth < 720 ? 4 : 7;
-  if (items.length <= maxItems) return items.map((item) => ({ ...item }));
-
-  const head = items[0] && items[0].kind === "system" ? [{ ...items[0] }] : [];
-  const minimumTail = innerWidth < 720 ? 2 : 3;
-  const tailCount = Math.max(minimumTail, maxItems - head.length - 1);
-  const hiddenCount = items.length - head.length - tailCount;
-  const aggregate = {
-    id: "earlier-context",
-    kind: "unknown",
-    aggregate: true,
-    aggregateCount: hiddenCount,
+function timelineFrom(payload) {
+  if (payload.timeline && Array.isArray(payload.timeline.history)) return payload.timeline;
+  const items = payload.snapshot && Array.isArray(payload.snapshot.items) ? payload.snapshot.items : [];
+  return {
+    revision: payload.sequence || 0,
+    history: items.map((item, order) => ({ ...item, order })),
+    activeIds: items.map(itemKey),
+    enteredIds: items.map(itemKey),
+    retainedIds: [],
+    exitedIds: [],
+    summaryEdges: [],
   };
-  return [...head, aggregate, ...items.slice(-tailCount).map((item) => ({ ...item }))];
-}
-
-function displayItems(items) {
-  return viewMode === "overview"
-    ? items.map((item) => ({ ...item }))
-    : windowItems(items);
 }
 
 function nodeText(item, index) {
-  if (item.aggregate) {
-    return {
-      kind: "Active context",
-      title: `${item.aggregateCount} earlier items`,
-      detail: "retained in model context",
-    };
-  }
   const meta = kindMeta[item.kind] || kindMeta.unknown;
+  const active = item.active ? "active context" : "outside context";
   return {
     kind: meta.label,
-    title: item.toolName || meta.label,
-    detail: item.toolName ? `tool result - item ${index + 1}` : `context item ${index + 1}`,
+    title: item.summary ? "Compaction summary" : item.toolName || meta.label,
+    detail: item.toolName ? `${active} - ${item.toolName}` : `${active} - history ${index + 1}`,
   };
 }
 
@@ -543,7 +568,7 @@ function createNode(item, index, target) {
   const meta = kindMeta[item.kind] || kindMeta.unknown;
   const element = document.createElement("button");
   element.type = "button";
-  element.className = `node${item.aggregate ? " aggregate" : ""}`;
+  element.className = "node";
   element.style.setProperty("--node-color", meta.color);
 
   const kind = document.createElement("span");
@@ -561,6 +586,10 @@ function createNode(item, index, target) {
     y: target.y + 20,
     targetX: target.x,
     targetY: target.y,
+    homeX: target.homeX,
+    homeY: target.homeY,
+    focusX: target.focusX,
+    focusY: target.focusY,
     width: element.offsetWidth || 176,
     height: element.offsetHeight || 92,
     opacity: 0,
@@ -583,55 +612,105 @@ function updateNodeContent(node, item, index) {
   node.item = item;
   node.index = index;
   node.element.style.setProperty("--node-color", meta.color);
+	node.element.classList.toggle("active", Boolean(item.active));
+	node.element.classList.toggle("inactive", !item.active);
+	node.element.classList.toggle("memory", item.kind === "memory");
   node.kind.textContent = text.kind;
   node.title.textContent = text.title;
   node.detail.textContent = text.detail;
   node.element.setAttribute("aria-label", `${text.kind}: ${text.title}, ${text.detail}`);
 }
 
-function layoutFor(items, index) {
-  const item = items[index];
-  const meta = kindMeta[item.kind] || kindMeta.unknown;
-  if (viewMode === "overview") {
-    const columns = Math.max(3, Math.min(8, Math.ceil(Math.sqrt(items.length * 1.7))));
-    const row = Math.floor(index / columns);
-    const offset = index % columns;
-    const column = row % 2 === 0 ? offset : columns - 1 - offset;
-    return { x: 250 + column * 228, y: 270 + row * 158 };
-  }
-  if (innerWidth < 720) {
-    return {
-      x: 360,
-      y: 260 + index * 136 + meta.lane * 0.08,
-    };
-  }
+function homePosition(index) {
+  const mobile = innerWidth < 720;
+  const columns = mobile ? 2 : 6;
+  const row = Math.floor(index / columns);
+  const offset = index % columns;
+  const column = row % 2 === 0 ? offset : columns - 1 - offset;
   return {
-    x: 250 + index * 224,
-    y: 410 + meta.lane + Math.sin(index * 1.4) * 12,
+    x: (mobile ? 245 : 250) + column * (mobile ? 210 : 228),
+    y: 720 + row * (mobile ? 146 : 158),
   };
 }
 
-function reconcileNodes(items) {
+function focusPosition(item, index, count) {
+  const meta = kindMeta[item.kind] || kindMeta.unknown;
+  if (innerWidth < 720) {
+    return {
+      x: 360,
+      y: 245 + index * 130 + meta.lane * 0.06,
+    };
+  }
+	const columns = Math.min(7, Math.max(1, count));
+	const row = Math.floor(index / columns);
+	const offset = index % columns;
+	const column = row % 2 === 0 ? offset : columns - 1 - offset;
+  return {
+    x: 250 + column * 224,
+    y: 285 + row * 146 + meta.lane * 0.35 + Math.sin(index * 1.4) * 8,
+  };
+}
+
+function nodeLayout(item, historyIndex, activeIndex, activeCount) {
+  const home = homePosition(historyIndex);
+  const focus = activeIndex >= 0 ? focusPosition(item, activeIndex, activeCount) : home;
+  const target = viewMode === "window" && activeIndex >= 0 ? focus : home;
+  return {
+    x: target.x,
+    y: target.y,
+    homeX: home.x,
+    homeY: home.y,
+    focusX: focus.x,
+    focusY: focus.y,
+  };
+}
+
+function flashDiff(node, diff) {
+  if (!diff) return;
+  node.element.classList.remove("entered", "exited");
+  void node.element.offsetWidth;
+  node.element.classList.add(diff);
+  setTimeout(() => node.element.classList.remove(diff), reducedMotion ? 20 : 680);
+}
+
+function reconcileNodes(timeline) {
+  const items = timeline.history || [];
+  const activeOrder = new Map((timeline.activeIds || []).map((id, index) => [String(id), index]));
+  const activeIds = new Set(activeOrder.keys());
+	const summaryTargets = new Set((timeline.summaryEdges || []).map((edge) => String(edge.to)));
+  const enteredIds = new Set((timeline.enteredIds || []).map(String));
+  const exitedIds = new Set((timeline.exitedIds || []).map(String));
+	const animateDiff = timeline.revision !== lastAnimatedRevision;
   const wanted = new Set();
   items.forEach((item, index) => {
     const key = itemKey(item);
     wanted.add(key);
-    const target = layoutFor(items, index);
+	const activeIndex = activeOrder.get(key) ?? -1;
+	const active = activeIds.has(key);
+	const displayItem = { ...item, active, summary: Boolean(item.synthetic) || summaryTargets.has(key) };
+	const target = nodeLayout(displayItem, index, activeIndex, activeOrder.size);
     let node = nodes.get(key);
     if (!node) {
-      node = createNode(item, index, target);
+		node = createNode(displayItem, index, target);
       nodes.set(key, node);
-      requestAnimationFrame(() => { node.targetOpacity = 1; });
     } else {
       if (node.removeTimer) clearTimeout(node.removeTimer);
       node.removeTimer = null;
-      node.targetOpacity = 1;
       node.element.removeAttribute("aria-hidden");
       node.element.tabIndex = 0;
-      updateNodeContent(node, item, index);
+		updateNodeContent(node, displayItem, index);
     }
+	node.homeX = target.homeX;
+	node.homeY = target.homeY;
+	node.focusX = target.focusX;
+	node.focusY = target.focusY;
+	node.width = node.element.offsetWidth || node.width;
+	node.height = node.element.offsetHeight || node.height;
     node.targetX = target.x;
     node.targetY = target.y;
+	node.targetOpacity = active ? 1 : viewMode === "overview" ? 0.38 : 0.2;
+	if (animateDiff && enteredIds.has(key)) flashDiff(node, "entered");
+	else if (animateDiff && exitedIds.has(key)) flashDiff(node, "exited");
     world.appendChild(node.element);
   });
 
@@ -648,24 +727,34 @@ function reconcileNodes(items) {
     }, reducedMotion ? 20 : 720);
   }
 
-  reconcileEdges(items.map(itemKey));
-  updateBounds(items);
+	reconcileEdges(timeline, items, activeIds);
+	updateBounds(timeline, items, activeOrder);
+	lastAnimatedRevision = timeline.revision;
 }
 
-function reconcileEdges(keys) {
+function reconcileEdges(timeline, items, activeIds) {
   const desired = new Set();
+	const addEdge = (from, to, type) => {
+		if (!nodes.has(from) || !nodes.has(to)) return;
+		const key = `${type}:${from}->${to}`;
+		desired.add(key);
+		const isActive = activeIds.has(from) && activeIds.has(to);
+		let edge = edges.get(key);
+		if (!edge) {
+			const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+			path.setAttribute("class", `edge ${type} pending`);
+			edgeGroup.appendChild(path);
+			edge = { key, from, to, type, path };
+			edges.set(key, edge);
+			requestAnimationFrame(() => path.classList.remove("pending"));
+		}
+		edge.path.classList.toggle("inactive", !isActive);
+	};
+	const keys = items.map(itemKey);
   for (let index = 1; index < keys.length; index += 1) {
-    const from = keys[index - 1];
-    const to = keys[index];
-    const key = `${from}->${to}`;
-    desired.add(key);
-    if (edges.has(key)) continue;
-    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    path.setAttribute("class", "edge pending");
-    edgeGroup.appendChild(path);
-    edges.set(key, { key, from, to, path });
-    requestAnimationFrame(() => path.classList.remove("pending"));
+		addEdge(keys[index - 1], keys[index], "sequence");
   }
+	for (const edge of timeline.summaryEdges || []) addEdge(String(edge.from), String(edge.to), "summary");
 
   for (const [key, edge] of edges) {
     if (desired.has(key)) continue;
@@ -675,14 +764,29 @@ function reconcileEdges(keys) {
   }
 }
 
-function updateBounds(items) {
-  if (!items.length) return;
-  const positions = items.map((_, index) => layoutFor(items, index));
+function boundsFor(positions) {
+  if (!positions.length) return { x: 180, y: 180, width: 520, height: 280 };
   const minX = Math.min(...positions.map((point) => point.x)) - 122;
   const maxX = Math.max(...positions.map((point) => point.x)) + 122;
   const minY = Math.min(...positions.map((point) => point.y)) - 104;
   const maxY = Math.max(...positions.map((point) => point.y)) + 104;
-  frameTarget = { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+function updateBounds(timeline, items, activeOrder) {
+  const homePositions = items.map((_, index) => homePosition(index));
+	const itemsById = new Map(items.map((item) => [itemKey(item), item]));
+  const focusPositions = (timeline.activeIds || []).map((id, index) => {
+	const item = itemsById.get(String(id));
+	return item ? focusPosition(item, index, activeOrder.size) : null;
+  }).filter(Boolean);
+	const visiblePositions = viewMode === "window" ? focusPositions : homePositions;
+	const visibleBounds = boundsFor(visiblePositions);
+	const worldBounds = boundsFor([...homePositions, ...focusPositions]);
+	const { x: minX, y: minY, width, height } = visibleBounds;
+	const maxX = worldBounds.x + worldBounds.width;
+	const maxY = worldBounds.y + worldBounds.height;
+	frameTarget = { x: minX, y: minY, width, height };
 
   const worldWidth = Math.max(1000, maxX + 260);
   const worldHeight = Math.max(800, maxY + 240);
@@ -769,7 +873,8 @@ function renderFrame(time) {
       const [startX, startY] = borderPoint(from, to.renderX, to.renderY);
       const [endX, endY] = borderPoint(to, from.renderX, from.renderY);
       const midX = (startX + endX) / 2;
-      const curve = (from.index % 2 === 0 ? -1 : 1) * 18;
+		const curveSize = edge.type === "summary" ? 34 : 18;
+		const curve = (from.index % 2 === 0 ? -1 : 1) * curveSize;
       edge.path.setAttribute("d", `M ${startX} ${startY} Q ${midX} ${(startY + endY) / 2 + curve} ${endX} ${endY}`);
     }
   }
@@ -905,12 +1010,13 @@ viewport.addEventListener("wheel", (event) => {
 
 function updateChrome(payload) {
   const snapshot = payload.snapshot;
+	const timeline = timelineFrom(payload);
   document.body.dataset.phase = payload.phase || "idle";
   $("#phase").textContent = payload.activeTools && payload.activeTools.length
     ? payload.activeTools.join(", ")
     : payload.phase || "idle";
   $("#model").textContent = snapshot && snapshot.model ? snapshot.model : "no model";
-  $("#item-count").textContent = snapshot ? String(snapshot.items.length) : "0";
+	$("#item-count").textContent = `${timeline.activeIds.length} / ${timeline.history.length}`;
 
   const percent = snapshot && Number.isFinite(snapshot.percent) ? Math.min(100, snapshot.percent) : 0;
   const fill = $("#usage-fill");
@@ -925,13 +1031,14 @@ function updateChrome(payload) {
 function applyPayload(payload) {
   currentPayload = payload;
   updateChrome(payload);
-  const items = payload.snapshot && Array.isArray(payload.snapshot.items) ? payload.snapshot.items : [];
-  $("#empty-state").classList.toggle("hidden", items.length > 0);
-  reconcileNodes(displayItems(items));
+	const timeline = timelineFrom(payload);
+	$("#empty-state").classList.toggle("hidden", timeline.history.length > 0);
+	reconcileNodes(timeline);
 }
 
 function setMode(mode) {
   viewMode = mode;
+	document.body.dataset.mode = mode;
   $("#window-mode").setAttribute("aria-pressed", String(mode === "window"));
   $("#overview-mode").setAttribute("aria-pressed", String(mode === "overview"));
   freeCamera = false;
@@ -947,7 +1054,16 @@ addEventListener("resize", () => {
 });
 
 function demoPayload() {
-  const kinds = ["system", "user", "assistant", "tool", "assistant", "user", "assistant", "tool", "memory", "user", "assistant", "tool", "assistant", "user", "assistant"];
+	const kinds = ["system", "user", "assistant", "tool", "assistant", "user", "assistant", "tool", "user", "assistant", "tool", "assistant", "user", "assistant", "tool", "assistant", "user", "assistant", "memory", "user", "assistant", "tool", "assistant"];
+	const history = kinds.map((kind, index) => ({
+		id: kind === "system" ? "system-prompt" : kind === "memory" ? "memory-18" : `message-${index}`,
+		kind,
+		order: index,
+		firstSeenAt: Date.now() - (kinds.length - index) * 1000,
+		lastSeenAt: Date.now(),
+		...(kind === "tool" ? { toolName: index === 3 ? "read" : index === 7 ? "bash" : "search" } : {}),
+	}));
+	const activeIds = ["system-prompt", "memory-18", ...history.slice(-4).map(itemKey)];
   return {
     sequence: 1,
     publishedAt: Date.now(),
@@ -959,12 +1075,21 @@ function demoPayload() {
       tokens: 78240,
       contextWindow: 200000,
       percent: 39.12,
-      items: kinds.map((kind, index) => ({
-        id: kind === "system" ? "system-prompt" : `message-${index}`,
-        kind,
-        ...(kind === "tool" ? { toolName: index === 3 ? "read" : index === 7 ? "bash" : "search" } : {}),
-      })),
+		items: history.filter((item) => activeIds.includes(item.id)).map(({ id, kind, toolName }) => ({
+			id,
+			kind,
+			...(toolName ? { toolName } : {}),
+		})),
     },
+		timeline: {
+			revision: 7,
+			history,
+			activeIds,
+			enteredIds: ["memory-18", ...history.slice(-4).map(itemKey)],
+			retainedIds: ["system-prompt"],
+			exitedIds: history.slice(1, 18).map(itemKey),
+			summaryEdges: history.slice(1, 18).map((item) => ({ from: item.id, to: "memory-18", kind: "summary" })),
+		},
   };
 }
 
@@ -990,7 +1115,17 @@ globalThis.__contextRail = {
   diagnostics: () => ({
     connected: $("#connection").dataset.state,
     mode: viewMode,
-    nodes: [...nodes.keys()],
+		historyIds: [...nodes.keys()],
+		activeIds: [...nodes.values()].filter((node) => node.item.active).map((node) => node.key),
+		inactiveIds: [...nodes.values()].filter((node) => !node.item.active).map((node) => node.key),
+		positions: Object.fromEntries([...nodes.values()].map((node) => [node.key, {
+			homeX: node.homeX,
+			homeY: node.homeY,
+			focusX: node.focusX,
+			focusY: node.focusY,
+			targetX: node.targetX,
+			targetY: node.targetY,
+		}])),
     edges: edges.size,
     phase: document.body.dataset.phase,
     frame: { ...frameTarget },

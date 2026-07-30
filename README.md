@@ -11,6 +11,7 @@ The extension observes OMP's public lifecycle events, renders a compact terminal
 - Shows tool execution and compaction phases.
 - Provides `/context-rail` with `show`, `hide`, and `toggle` actions.
 - Starts a localhost-only HTML viewer with `/context-rail web`.
+- Keeps an append-only session history while each model call updates the active context set.
 - Reconciles live graph nodes without rebuilding the canvas or resetting the camera.
 - Does not retain message content or write transcripts to disk.
 
@@ -51,8 +52,8 @@ Inside OMP:
 
 The viewer keeps the full-screen camera, pan, zoom, floating-node, and SVG edge behavior of [graphcon-deck](https://github.com/yoheinakajima/graphcon-deck), adapted to reconcile a changing context instead of advancing through authored slides.
 
-- **Window** keeps the system prompt and newest context readable, grouping older retained entries into one block.
-- **Overview** fits every active context entry into a graph layout.
+- **Window** projects the items in the current model call into a compact frame; inactive history remains on the canvas.
+- **Overview** fits the complete session history and dims items outside the current model context.
 - Dragging the canvas pans, scrolling zooms, and dragging a node temporarily pulls it out of the rail.
 - The usage rail, model, phase, tools, and compaction state update over Server-Sent Events.
 
@@ -76,9 +77,10 @@ src/index.ts       read-only OMP adapter
         +--> src/server.ts      localhost HTTP + SSE
                     |
                     v
-              web/index.html   live graph viewer
+              web/index.html   live history + active-window viewer
 
 src/snapshot.ts    shared normalized context model
+src/timeline.ts    append-only history and active-set diffs
 ```
 
 Keeping the snapshot model independent from OMP makes a future Pi adapter or web viewer possible without rewriting the UI model.
@@ -107,9 +109,9 @@ OMP is the runtime host rather than a package dependency. The extension uses a s
 
 ## Roadmap
 
-- Mark summaries and pinned context with richer provenance.
+- Mark pinned context with richer provenance.
 - Add throttled streaming state.
-- Add a visible compaction transition between discarded entries and their summary node.
+- Add optional per-item token weights when OMP exposes reliable measurements.
 - Add a Pi adapter behind the existing snapshot interface.
 
 ## License

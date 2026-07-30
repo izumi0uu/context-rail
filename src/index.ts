@@ -4,7 +4,8 @@ import {
 	startContextRailServer,
 	type ContextRailViewer,
 } from "./server.ts";
-import { createSnapshot } from "./snapshot.ts";
+import { ContextMessageIdentity, createSnapshot } from "./snapshot.ts";
+import { ContextTimeline } from "./timeline.ts";
 
 const UI_KEY = "context-rail";
 
@@ -24,12 +25,16 @@ export function createContextRailExtension(
 	const startViewer = options.startViewer ?? startContextRailServer;
 
 	return function contextRailExtension(pi: OmpExtensionApi): void {
+		const timeline = new ContextTimeline();
+		const identity = new ContextMessageIdentity();
 		const state: RenderState = {
 			snapshot: undefined,
+			timeline: timeline.current(),
 			phase: "idle",
 			activeTools: [],
 		};
 		let expanded = false;
+		let compactionPending = false;
 		const activeTools = new Map<string, string>();
 		let viewer: ContextRailViewer | undefined;
 
@@ -44,7 +49,10 @@ export function createContextRailExtension(
 
 		const reset = (ctx: OmpExtensionContext): void => {
 			state.snapshot = undefined;
+			state.timeline = timeline.reset();
 			state.phase = "idle";
+			compactionPending = false;
+			identity.reset();
 			activeTools.clear();
 			refresh(ctx);
 		};
@@ -53,10 +61,13 @@ export function createContextRailExtension(
 			const usage = ctx.getContextUsage();
 			state.snapshot = createSnapshot({
 				messages: event.messages,
+				identity,
 				...(usage ? { usage } : {}),
 				...(ctx.model?.id ? { model: ctx.model.id } : {}),
 				systemPromptParts: systemPromptPartCount(ctx),
 			});
+			state.timeline = timeline.apply(state.snapshot, { compaction: compactionPending });
+			compactionPending = false;
 			state.phase = "context";
 			refresh(ctx);
 		});
@@ -74,6 +85,7 @@ export function createContextRailExtension(
 		});
 
 		pi.on("auto_compaction_start", (_event, ctx) => {
+			compactionPending = true;
 			state.phase = "compacting";
 			refresh(ctx);
 		});
@@ -130,7 +142,14 @@ export function createContextRailExtension(
 export default createContextRailExtension();
 
 export { createSnapshot } from "./snapshot.ts";
+export { ContextMessageIdentity } from "./snapshot.ts";
+export { ContextTimeline, emptyTimelineSnapshot } from "./timeline.ts";
 export { renderStatus, renderStrip, renderWidget } from "./render.ts";
 export { startContextRailServer } from "./server.ts";
 export type { ContextRailViewer, ContextRailWebPayload } from "./server.ts";
 export type { ContextItem, ContextItemKind, ContextSnapshot } from "./snapshot.ts";
+export type {
+	ContextTimelineSnapshot,
+	HistoryItem,
+	SummaryEdge,
+} from "./timeline.ts";
