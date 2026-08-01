@@ -42,6 +42,7 @@
     position: fixed;
     inset: 0;
     overflow: hidden;
+    clip-path: inset(var(--graph-clip-top, 0px) 0 var(--graph-clip-bottom, 0px) 0);
     touch-action: none;
     cursor: grab;
   }
@@ -55,8 +56,9 @@
     width: 100px;
     height: 100px;
     transform-origin: 0 0;
-    will-change: transform;
   }
+
+  #world.moving { will-change: transform; }
 
   #edge-layer {
     position: absolute;
@@ -100,10 +102,10 @@
 	}
 	.edge.summary.inactive { opacity: 0.2; }
 
-  .node {
-    position: absolute;
-    width: 176px;
-    min-height: 92px;
+	  .node {
+	    position: absolute;
+	    width: 176px;
+	    height: 92px;
     border: 1.5px solid var(--node-color, var(--hair));
     border-radius: 8px;
     padding: 13px 14px 12px;
@@ -111,16 +113,17 @@
     color: var(--ink);
     text-align: left;
     box-shadow: var(--shadow);
-    cursor: pointer;
+	    cursor: pointer;
     user-select: none;
     -webkit-user-select: none;
     opacity: 0;
     transform-origin: center;
-    will-change: transform, opacity;
   }
 
-  .node:hover,
-  .node:focus-visible {
+  .node.moving { will-change: transform, opacity; }
+	.node:active { cursor: grabbing; }
+
+	  .node:hover {
     border-width: 2px;
     outline: none;
   }
@@ -145,23 +148,29 @@
     text-transform: uppercase;
   }
 
-  .node-title {
-    display: block;
-    margin-top: 9px;
-    color: var(--ink);
-    font-size: 16px;
-    font-weight: 700;
-    line-height: 1.18;
-  }
+	  .node-title {
+	    display: block;
+	    margin-top: 9px;
+	    overflow: hidden;
+	    color: var(--ink);
+	    font-size: 16px;
+	    font-weight: 700;
+	    line-height: 1.18;
+	    text-overflow: ellipsis;
+	    white-space: nowrap;
+	  }
 
-  .node-detail {
-    display: block;
-    margin-top: 7px;
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: 10px;
-    line-height: 1.35;
-  }
+	  .node-detail {
+	    display: block;
+	    margin-top: 7px;
+	    overflow: hidden;
+	    color: var(--muted);
+	    font-family: var(--mono);
+	    font-size: 10px;
+	    line-height: 1.35;
+	    text-overflow: ellipsis;
+	    white-space: nowrap;
+	  }
 
   .node.aggregate {
     border-style: dashed;
@@ -175,6 +184,15 @@
 	}
 
 	.node.inactive::before { opacity: 0.48; }
+
+	.node.pending-context {
+		border-style: dashed;
+		background: rgba(255, 255, 255, 0.82);
+		box-shadow: 0 5px 16px rgba(36, 39, 43, 0.06);
+		filter: none;
+	}
+
+	.node.pending-context::before { opacity: 0.82; }
 
 	.node.active {
 		box-shadow: 0 8px 22px rgba(36, 39, 43, 0.08), 0 0 0 3px rgba(87, 76, 227, 0.08);
@@ -276,6 +294,124 @@
   .legend-item { display: inline-flex; align-items: center; gap: 5px; }
   .legend-item i { width: 7px; height: 7px; border-radius: 50%; background: var(--legend-color); }
 
+  #sessionbar {
+    position: fixed;
+    top: 76px;
+    left: 22px;
+    right: 22px;
+    z-index: 25;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 0;
+    pointer-events: none;
+  }
+
+  #follow-active {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 7px;
+    height: 30px;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 9px;
+    line-height: 1;
+    cursor: pointer;
+    pointer-events: auto;
+  }
+
+  #follow-active input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+  }
+
+  #follow-track {
+    position: relative;
+    width: 28px;
+    height: 16px;
+    border: 1px solid #c9cdc6;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.9);
+    transition: border-color 160ms ease, background 160ms ease;
+  }
+
+  #follow-track::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--quiet);
+    transition: transform 160ms ease, background 160ms ease;
+  }
+
+  #follow-active input:checked + #follow-track {
+    border-color: var(--indigo);
+    background: rgba(87, 76, 227, 0.1);
+  }
+
+  #follow-active input:checked + #follow-track::after {
+    background: var(--indigo);
+    transform: translateX(12px);
+  }
+
+  #follow-active input:focus-visible + #follow-track { outline: 2px solid var(--indigo); outline-offset: 2px; }
+
+  #session-tabs {
+    display: flex;
+    flex: 1 1 auto;
+    gap: 6px;
+    min-width: 0;
+    overflow-x: auto;
+    padding: 2px;
+    scrollbar-width: none;
+    pointer-events: auto;
+  }
+
+  #session-tabs::-webkit-scrollbar { display: none; }
+
+  .session-tab {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 7px;
+    max-width: 220px;
+    height: 30px;
+    border: 1px solid var(--hair);
+    border-radius: 6px;
+    padding: 0 10px;
+    background: rgba(255, 255, 255, 0.86);
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 9px;
+    line-height: 1;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(36, 39, 43, 0.04);
+  }
+
+  .session-tab:hover { border-color: #c5c8c2; color: var(--ink); }
+  .session-tab[aria-selected="true"] { border-color: var(--ink); background: var(--ink); color: #fff; }
+  .session-tab[data-connected="false"] { opacity: 0.48; }
+
+  .session-dot {
+    width: 6px;
+    height: 6px;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    background: var(--quiet);
+  }
+
+  .session-tab[data-active="true"] .session-dot { background: var(--green); }
+  .session-tab[data-unread="true"] .session-dot { box-shadow: 0 0 0 3px rgba(87, 76, 227, 0.14); }
+  .session-tab-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .session-tab-process { color: var(--quiet); font-size: 8px; }
+  .session-tab[aria-selected="true"] .session-tab-process { color: rgba(255, 255, 255, 0.62); }
+
   #toolbar {
     position: fixed;
     right: 22px;
@@ -340,6 +476,171 @@
   }
 
   #tooltip.visible { opacity: 0.96; }
+
+  #detail-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 44;
+    border: 0;
+    padding: 0;
+    background: rgba(29, 31, 35, 0.18);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 180ms ease;
+  }
+
+  #detail-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 45;
+    display: flex;
+    width: min(480px, 100vw);
+    border-left: 1px solid var(--hair);
+    background: var(--surface);
+    box-shadow: -12px 0 32px rgba(36, 39, 43, 0.12);
+    flex-direction: column;
+    transform: translateX(102%);
+    transition: transform 220ms cubic-bezier(0.2, 0.75, 0.2, 1);
+  }
+
+  body[data-detail-open="true"] #detail-backdrop {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  body[data-detail-open="true"] #detail-panel { transform: translateX(0); }
+
+  #detail-header {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 12px;
+    padding: 22px 22px 18px;
+    border-bottom: 1px solid var(--hair);
+  }
+
+  #detail-kind {
+    color: var(--detail-color, var(--quiet));
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 1.3;
+    text-transform: uppercase;
+  }
+
+  #detail-title {
+    margin: 7px 0 0;
+    font-size: 22px;
+    font-weight: 730;
+    line-height: 1.2;
+  }
+
+  #detail-close {
+    display: grid;
+    width: 34px;
+    height: 34px;
+    border: 1px solid var(--hair);
+    border-radius: 6px;
+    padding: 0;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    place-items: center;
+  }
+
+  #detail-close:hover { border-color: var(--ink); color: var(--ink); }
+  #detail-close:focus-visible { outline: 2px solid var(--indigo); outline-offset: 2px; }
+  #detail-close span { font-size: 22px; font-weight: 400; line-height: 1; }
+
+  #detail-meta {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+    border-bottom: 1px solid var(--hair);
+  }
+
+  .detail-meta-cell {
+    min-width: 0;
+    padding: 13px 22px;
+  }
+
+  .detail-meta-cell + .detail-meta-cell { border-left: 1px solid var(--hair); }
+  .detail-meta-cell span {
+    display: block;
+    color: var(--quiet);
+    font-family: var(--mono);
+    font-size: 8px;
+    line-height: 1;
+    text-transform: uppercase;
+  }
+
+  .detail-meta-cell strong {
+    display: block;
+    margin-top: 6px;
+    overflow: hidden;
+    color: var(--ink);
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 650;
+    line-height: 1.3;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  #detail-content {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    padding: 2px 22px 32px;
+  }
+
+  .detail-block {
+    padding: 20px 0;
+    border-bottom: 1px solid var(--hair);
+  }
+
+  .detail-block:last-child { border-bottom: 0; }
+  .detail-block-label {
+    display: block;
+    margin-bottom: 10px;
+    color: var(--detail-color, var(--quiet));
+    font-family: var(--mono);
+    font-size: 8px;
+    font-weight: 700;
+    line-height: 1.2;
+    text-transform: uppercase;
+  }
+
+  .detail-block pre {
+    margin: 0;
+    color: var(--ink);
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.65;
+    overflow-wrap: anywhere;
+    tab-size: 2;
+    white-space: pre-wrap;
+    user-select: text;
+  }
+
+  .detail-block[data-type="thinking"] pre { color: var(--muted); }
+  .detail-block img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    border: 1px solid var(--hair);
+    border-radius: 4px;
+  }
+
+  #detail-empty {
+    margin: 0;
+    padding: 24px 0;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.65;
+  }
 
   #statusbar {
     position: fixed;
@@ -418,6 +719,10 @@
   @media (max-width: 720px) {
     #topbar { padding: 16px; }
     #legend { top: 48px; left: 16px; gap: 7px 10px; }
+    #sessionbar { top: 72px; left: 16px; right: 16px; gap: 8px; }
+    #follow-label { display: none; }
+    .session-tab { max-width: 156px; padding: 0 9px; }
+    .session-tab-process { display: none; }
     #model { max-width: 42vw; }
     #toolbar { right: 14px; bottom: 112px; }
     #toolbar button { min-width: 62px; padding: 0 8px; }
@@ -431,10 +736,42 @@
     .stat { min-width: 0; text-align: left; }
     .stat:last-child { text-align: right; }
     .node { width: 164px; }
+    #detail-panel { width: 100vw; }
+    #detail-header { padding: 18px 18px 15px; }
+    .detail-meta-cell { padding: 12px 18px; }
+    #detail-content { padding: 2px 18px 28px; }
+  }
+
+  @media (max-height: 420px) and (orientation: landscape) {
+    #topbar { padding: 10px 14px; }
+    #legend { display: none; }
+    #sessionbar { top: 44px; left: 14px; right: 202px; }
+    #toolbar { top: 42px; right: 14px; bottom: auto; }
+    #toolbar button { min-width: 56px; height: 30px; padding: 0 8px; }
+    #toolbar #fit-view { min-width: 40px; }
+    #statusbar {
+      grid-template-columns: minmax(180px, 1fr) auto auto;
+      gap: 16px;
+      min-height: 56px;
+      padding: 8px 14px;
+    }
+    #usage-wrap { grid-column: auto; }
+    #usage-track { margin-top: 7px; }
+    .stat { min-width: 72px; text-align: right; }
+    .stat:last-child { text-align: right; }
+    .stat span { margin-top: 3px; }
+    .node { height: 64px; padding: 9px 10px; }
+    .node::before { left: 10px; }
+    .node-title { margin-top: 6px; font-size: 20px; }
+    .node-detail { display: none; }
   }
 
   @media (prefers-reduced-motion: reduce) {
-    *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; }
+	    *, *::before, *::after {
+	      animation: none !important;
+	      scroll-behavior: auto !important;
+	      transition-duration: 0.01ms !important;
+	    }
   }
 </style>
 </head>
@@ -462,10 +799,20 @@
 <div id="legend" aria-label="Context roles">
   <span class="legend-item" style="--legend-color:#1d1f23"><i></i>system</span>
   <span class="legend-item" style="--legend-color:#4e8a35"><i></i>memory</span>
+  <span class="legend-item" style="--legend-color:#8b3f6f"><i></i>developer</span>
   <span class="legend-item" style="--legend-color:#574ce3"><i></i>user</span>
   <span class="legend-item" style="--legend-color:#087b75"><i></i>assistant</span>
   <span class="legend-item" style="--legend-color:#a36f26"><i></i>tool</span>
 </div>
+
+<nav id="sessionbar" aria-label="Observed sessions">
+  <label id="follow-active">
+    <input id="follow-toggle" type="checkbox" aria-label="Follow active" checked>
+    <span id="follow-track" aria-hidden="true"></span>
+    <span id="follow-label">Follow active</span>
+  </label>
+  <div id="session-tabs" role="tablist" aria-label="Sessions"></div>
+</nav>
 
 <div id="toolbar" role="group" aria-label="Graph view">
   <button id="window-mode" type="button" aria-pressed="true">Window</button>
@@ -475,6 +822,24 @@
 
 <div id="empty-state">waiting for context</div>
 <div id="tooltip" role="tooltip"></div>
+
+<button id="detail-backdrop" type="button" aria-label="Close item detail" tabindex="-1"></button>
+<aside id="detail-panel" role="dialog" aria-modal="true" aria-labelledby="detail-title" aria-hidden="true">
+  <header id="detail-header">
+    <div>
+      <span id="detail-kind">Context</span>
+      <h2 id="detail-title">Item detail</h2>
+    </div>
+    <button id="detail-close" type="button" aria-label="Close item detail" title="Close">
+      <span aria-hidden="true">&times;</span>
+    </button>
+  </header>
+  <div id="detail-meta">
+    <div class="detail-meta-cell"><span>context state</span><strong id="detail-state">outside context</strong></div>
+    <div class="detail-meta-cell"><span>model role</span><strong id="detail-role">unknown</strong></div>
+  </div>
+  <div id="detail-content"></div>
+</aside>
 
 <footer id="statusbar">
   <div id="usage-wrap">
@@ -492,6 +857,25 @@
 
 /* Interaction model adapted from graph-deck by Yohei Nakajima. */
 
+const eventCapabilityToken = (() => {
+	const storageKey = "context-rail-event-token";
+	const fragmentToken = new URLSearchParams(location.hash.slice(1)).get("token");
+	if (fragmentToken !== null) {
+		try {
+			sessionStorage.setItem(storageKey, fragmentToken);
+		} catch {
+			// The current page can still use the fragment capability when storage is unavailable.
+		}
+		history.replaceState(history.state, "", `${location.pathname}${location.search}`);
+		return fragmentToken;
+	}
+	try {
+		return sessionStorage.getItem(storageKey);
+	} catch {
+		return null;
+	}
+})();
+
 const $ = (selector) => document.querySelector(selector);
 const viewport = $("#viewport");
 const world = $("#world");
@@ -499,11 +883,33 @@ const edgeLayer = $("#edge-layer");
 const edgeGroup = $("#edges");
 const windowFrame = $("#window-frame");
 const tooltip = $("#tooltip");
-const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const detailBackdrop = $("#detail-backdrop");
+const detailPanel = $("#detail-panel");
+const detailContent = $("#detail-content");
+const sessionBar = $("#sessionbar");
+const sessionTabs = $("#session-tabs");
+const followToggle = $("#follow-toggle");
+const toolbar = $("#toolbar");
+const statusBar = $("#statusbar");
+const reducedMotionQuery = matchMedia("(prefers-reduced-motion: reduce)");
+let reducedMotion = reducedMotionQuery.matches;
+const MAX_STAGGER_TOTAL_MS = 280;
+const MAX_STAGGER_STEP_MS = 44;
+const MAX_ANIMATED_NODES = 120;
+const MIN_CAMERA_SCALE = 0.004;
+const MOBILE_BREAKPOINT = 720;
+const NODE_WIDTH_DESKTOP = 176;
+const NODE_WIDTH_MOBILE = 164;
+const NODE_HEIGHT = 92;
+const NODE_HEIGHT_SHORT_LANDSCAPE = 64;
+const POSITION_EPSILON = 0.08;
+const OPACITY_EPSILON = 0.002;
+const SCALE_EPSILON = 0.0002;
 
 const kindMeta = {
   system: { label: "System", color: "#1d1f23", lane: -54 },
   memory: { label: "Memory", color: "#4e8a35", lane: 54 },
+  developer: { label: "Developer", color: "#8b3f6f", lane: -42 },
   user: { label: "User", color: "#574ce3", lane: -25 },
   assistant: { label: "Assistant", color: "#087b75", lane: 28 },
   tool: { label: "Tool", color: "#a36f26", lane: 68 },
@@ -512,16 +918,157 @@ const kindMeta = {
 
 const nodes = new Map();
 const edges = new Map();
+const movingNodes = new Set();
+const dirtyEdges = new Set();
+const sessionStates = new Map();
+const deltaTransfers = new Map();
+const sessionViews = new Map();
+const unreadSessions = new Set();
+let sessionSummaries = [];
+let selectedStreamId = null;
+let activeStreamId = null;
+let followActive = true;
 let currentPayload = null;
 let viewMode = "window";
 let freeCamera = false;
-let frameTick = 0;
 let lastAnimatedRevision = -1;
 let hoveredNode = null;
+let detailSelection = null;
 let camera = { x: 500, y: 420, scale: 0.8 };
 let cameraTarget = { x: 500, y: 420, scale: 0.8 };
 let frameBox = { x: 180, y: 220, width: 640, height: 360 };
 let frameTarget = { ...frameBox };
+let fitTarget = { ...frameBox };
+let graphViewportBounds = null;
+let cameraDirty = true;
+let frameDirty = true;
+let animationFrameId = null;
+let animationFrameUsesTimeout = false;
+let renderLoopActive = false;
+const renderStats = {
+  frames: 0,
+  totalNodeUpdates: 0,
+  totalEdgeUpdates: 0,
+  lastFrameNodeUpdates: 0,
+  lastFrameEdgeUpdates: 0,
+  peakFrameNodeUpdates: 0,
+  peakFrameEdgeUpdates: 0,
+  lastFrameAt: null,
+  sleepingSince: null,
+};
+
+function differs(left, right, epsilon) {
+  return Math.abs(left - right) > epsilon;
+}
+
+function approach(current, target, ease, epsilon) {
+  if (!differs(current, target, epsilon)) return target;
+  const next = current + (target - current) * ease;
+  return differs(next, target, epsilon) ? next : target;
+}
+
+function scheduleRender() {
+  if (animationFrameId !== null) return;
+  renderLoopActive = true;
+  renderStats.sleepingSince = null;
+  animationFrameUsesTimeout = document.hidden;
+  animationFrameId = animationFrameUsesTimeout
+    ? setTimeout(() => renderFrame(performance.now()), 0)
+    : requestAnimationFrame(renderFrame);
+}
+
+function markNodeMoving(node) {
+  movingNodes.add(node);
+  node.element.classList.add("moving");
+	scheduleRender();
+}
+
+function markCameraDirty() {
+  cameraDirty = true;
+  world.classList.add("moving");
+	scheduleRender();
+}
+
+function markFrameDirty() {
+  frameDirty = true;
+  scheduleRender();
+}
+
+function isMobileLayout() {
+	return innerWidth <= MOBILE_BREAKPOINT;
+}
+
+function shortLandscapeColumns(viewportWidth, viewportHeight, itemCount) {
+	if (viewportHeight > 420 || viewportWidth <= viewportHeight) return 0;
+	return Math.min(5, Math.max(1, itemCount));
+}
+
+function isShortLandscapeLayout() {
+	return shortLandscapeColumns(innerWidth, innerHeight, 1) > 0;
+}
+
+function availableGraphViewport(viewportHeight, sessionBottom, toolbarTop, statusTop) {
+	const heightLimit = Math.max(1, viewportHeight);
+	const top = Math.min(heightLimit, Math.max(0, sessionBottom));
+	const bottom = Math.max(top, Math.min(heightLimit, toolbarTop, statusTop));
+	return {
+		top,
+		bottom,
+		height: Math.max(1, bottom - top),
+		centerY: top + (bottom - top) / 2,
+	};
+}
+
+function syncGraphViewport() {
+		const bounds = availableGraphViewport(
+			innerHeight,
+			sessionBar.getBoundingClientRect().bottom,
+			isShortLandscapeLayout() ? innerHeight : toolbar.getBoundingClientRect().top,
+			statusBar.getBoundingClientRect().top,
+		);
+		const topInset = `${bounds.top}px`;
+		const bottomInset = `${Math.max(0, innerHeight - bounds.bottom)}px`;
+		const boundsChanged = !graphViewportBounds
+			|| differs(graphViewportBounds.top, bounds.top, POSITION_EPSILON)
+			|| differs(graphViewportBounds.bottom, bounds.bottom, POSITION_EPSILON);
+		const clipChanged = viewport.style.getPropertyValue("--graph-clip-top") !== topInset
+			|| viewport.style.getPropertyValue("--graph-clip-bottom") !== bottomInset;
+		if (clipChanged) {
+			viewport.style.setProperty("--graph-clip-top", topInset);
+			viewport.style.setProperty("--graph-clip-bottom", bottomInset);
+		}
+		graphViewportBounds = bounds;
+		return boundsChanged || clipChanged;
+}
+
+function graphViewport() {
+		if (!graphViewportBounds) syncGraphViewport();
+		return graphViewportBounds;
+}
+
+const graphChromeResizeObserver = typeof ResizeObserver === "function"
+	? new ResizeObserver(() => {
+		if (!syncGraphViewport()) return;
+		if (!freeCamera) fitView(false);
+		markCameraDirty();
+	})
+	: null;
+for (const element of [sessionBar, toolbar, statusBar]) graphChromeResizeObserver?.observe(element);
+syncGraphViewport();
+
+function handleReducedMotionChange(event) {
+	reducedMotion = event.matches;
+	if (!reducedMotion) return;
+	for (const node of nodes.values()) {
+		node.pendingDiff = null;
+		node.element.classList.remove("entered", "exited");
+		markNodeMoving(node);
+	}
+	markCameraDirty();
+	markFrameDirty();
+}
+
+reducedMotionQuery.addEventListener("change", handleReducedMotionChange);
 
 function formatTokens(value) {
   if (!Number.isFinite(value)) return "?";
@@ -550,36 +1097,342 @@ function timelineFrom(payload) {
     enteredIds: items.map(itemKey),
     retainedIds: [],
     exitedIds: [],
+    observedIds: [],
+    confirmedIds: [],
+    pendingIds: [],
     summaryEdges: [],
   };
 }
 
-function nodeText(item, index) {
-  const meta = kindMeta[item.kind] || kindMeta.unknown;
-  const active = item.active ? "active context" : "outside context";
+function clearGraph() {
+  hideTooltip();
+  closeDetail();
+  for (const node of nodes.values()) {
+    if (node.removeTimer) clearTimeout(node.removeTimer);
+    node.element.remove();
+  }
+  nodes.clear();
+  movingNodes.clear();
+  for (const edge of edges.values()) edge.path.remove();
+  edges.clear();
+  dirtyEdges.clear();
+  lastAnimatedRevision = -1;
+}
+
+function syncModeChrome() {
+  document.body.dataset.mode = viewMode;
+  $("#window-mode").setAttribute("aria-pressed", String(viewMode === "window"));
+  $("#overview-mode").setAttribute("aria-pressed", String(viewMode === "overview"));
+}
+
+function saveSessionView() {
+	  if (!selectedStreamId || !sessionStates.has(selectedStreamId)) return;
+  sessionViews.set(selectedStreamId, {
+    mode: viewMode,
+    freeCamera,
+    camera: { ...camera },
+    cameraTarget: { ...cameraTarget },
+  });
+}
+
+function restoreSessionView(streamId) {
+  const saved = sessionViews.get(streamId);
+  viewMode = saved ? saved.mode : "window";
+  freeCamera = saved ? saved.freeCamera : false;
+  camera = saved ? { ...saved.camera } : { x: 500, y: 420, scale: 0.8 };
+  cameraTarget = saved ? { ...saved.cameraTarget } : { ...camera };
+  markCameraDirty();
+  syncModeChrome();
+}
+
+function setFollowActive(next) {
+  followActive = Boolean(next);
+  followToggle.checked = followActive;
+  if (followActive && activeStreamId && sessionStates.has(activeStreamId)) {
+    selectSession(activeStreamId);
+  }
+  renderSessionTabs();
+}
+
+function selectSession(streamId, manual = false) {
+  if (!streamId || !sessionStates.has(streamId)) return;
+  if (manual) {
+    followActive = false;
+    followToggle.checked = false;
+  }
+  unreadSessions.delete(streamId);
+  if (selectedStreamId === streamId) {
+    renderSessionTabs();
+    return;
+  }
+	  if (selectedStreamId && sessionStates.has(selectedStreamId)) saveSessionView();
+  clearGraph();
+  selectedStreamId = streamId;
+  restoreSessionView(streamId);
+  currentPayload = null;
+  applyPayload(sessionStates.get(streamId), false);
+  renderSessionTabs();
+}
+
+function renderSessionTabs() {
+  const existing = new Map([...sessionTabs.children].map((tab) => [tab.dataset.streamId, tab]));
+  const wanted = new Set();
+  for (const summary of sessionSummaries) {
+    wanted.add(summary.streamId);
+    let tab = existing.get(summary.streamId);
+    if (!tab) {
+      tab = document.createElement("button");
+      tab.type = "button";
+      tab.className = "session-tab";
+      tab.setAttribute("role", "tab");
+      tab.dataset.streamId = summary.streamId;
+      const dot = document.createElement("i");
+      dot.className = "session-dot";
+      dot.setAttribute("aria-hidden", "true");
+      const label = document.createElement("span");
+      label.className = "session-tab-label";
+      const process = document.createElement("span");
+      process.className = "session-tab-process";
+      tab.append(dot, label, process);
+      tab.addEventListener("click", () => selectSession(tab.dataset.streamId, true));
+    }
+    tab.querySelector(".session-tab-label").textContent = summary.sessionLabel;
+    tab.querySelector(".session-tab-process").textContent = summary.processLabel;
+    tab.dataset.active = String(Boolean(summary.active));
+    tab.dataset.connected = String(Boolean(summary.connected));
+    tab.dataset.unread = String(unreadSessions.has(summary.streamId));
+    tab.setAttribute("aria-selected", String(summary.streamId === selectedStreamId));
+    tab.tabIndex = summary.streamId === selectedStreamId ? 0 : -1;
+    tab.title = `${summary.sessionLabel} - ${summary.processLabel}${summary.active ? " - active in OMP" : ""}${summary.connected ? "" : " - process offline"}`;
+    sessionTabs.appendChild(tab);
+  }
+  for (const [streamId, tab] of existing) {
+    if (!wanted.has(streamId)) tab.remove();
+  }
+}
+
+function emptyTimeline() {
   return {
-    kind: meta.label,
-    title: item.summary ? "Compaction summary" : item.toolName || meta.label,
-    detail: item.toolName ? `${active} - ${item.toolName}` : `${active} - history ${index + 1}`,
+    revision: 0,
+    history: [],
+    activeIds: [],
+    enteredIds: [],
+    retainedIds: [],
+    exitedIds: [],
+    observedIds: [],
+    confirmedIds: [],
+    pendingIds: [],
+    summaryEdges: [],
   };
 }
 
-function createNode(item, index, target) {
+function summaryEdgeKey(edge) {
+  return JSON.stringify([edge.kind, edge.from, edge.to]);
+}
+
+function applyRenderStatePatch(previous, patch) {
+  const state = patch.reset || !previous
+    ? { phase: "idle", activeTools: [], timeline: emptyTimeline() }
+	    : { ...previous };
+
+  if (Object.hasOwn(patch, "snapshot")) state.snapshot = patch.snapshot || undefined;
+  if (patch.phase) state.phase = patch.phase;
+  if (Array.isArray(patch.activeTools)) state.activeTools = [...patch.activeTools];
+  if (patch.timeline === null) {
+    delete state.timeline;
+    return state;
+  }
+  if (!patch.timeline) return state;
+
+  const timeline = patch.timeline.reset || !state.timeline
+    ? emptyTimeline()
+	    : { ...state.timeline };
+	  const historyUpserts = patch.timeline.historyUpserts || [];
+	  if (historyUpserts.length > 0) {
+	    const history = new Map(timeline.history.map((item) => [item.id, item]));
+	    for (const item of historyUpserts) history.set(item.id, structuredClone(item));
+	    timeline.history = [...history.values()].sort((left, right) => left.order - right.order);
+	  }
+
+	  const summaryEdgeUpserts = patch.timeline.summaryEdgeUpserts || [];
+	  if (summaryEdgeUpserts.length > 0) {
+	    const summaryEdges = new Map(timeline.summaryEdges.map((edge) => [summaryEdgeKey(edge), edge]));
+	    for (const edge of summaryEdgeUpserts) {
+	      summaryEdges.set(summaryEdgeKey(edge), structuredClone(edge));
+	    }
+	    timeline.summaryEdges = [...summaryEdges.values()];
+	  }
+  if (Number.isFinite(patch.timeline.revision)) timeline.revision = patch.timeline.revision;
+  for (const key of [
+    "activeIds",
+    "enteredIds",
+    "retainedIds",
+    "exitedIds",
+    "observedIds",
+    "confirmedIds",
+    "pendingIds",
+  ]) {
+    if (Array.isArray(patch.timeline[key])) timeline[key] = [...patch.timeline[key]];
+  }
+  state.timeline = timeline;
+  return state;
+}
+
+function decodeDeltaChunks(chunks) {
+  const decoded = chunks.map(({ data }) => {
+    const binary = atob(data);
+    return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  });
+  const byteLength = decoded.reduce((total, chunk) => total + chunk.byteLength, 0);
+  const bytes = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of decoded) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  const patch = JSON.parse(new TextDecoder().decode(bytes));
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+    throw new Error("Invalid render state patch");
+  }
+  return patch;
+}
+
+function applyDelta(delta) {
+  if (
+    !delta
+    || typeof delta.streamId !== "string"
+    || typeof delta.transferId !== "string"
+    || !Number.isSafeInteger(delta.index)
+    || delta.index < 0
+    || typeof delta.data !== "string"
+    || typeof delta.complete !== "boolean"
+  ) throw new Error("Invalid delta event");
+
+  let transfer = deltaTransfers.get(delta.streamId);
+  if (delta.index === 0) {
+    transfer = { transferId: delta.transferId, chunks: [] };
+    deltaTransfers.set(delta.streamId, transfer);
+  } else if (
+    !transfer
+    || transfer.transferId !== delta.transferId
+    || transfer.chunks.length !== delta.index
+  ) {
+    deltaTransfers.delete(delta.streamId);
+    throw new Error("Delta events arrived out of order");
+  }
+  transfer.chunks.push({ data: delta.data });
+  if (!delta.complete) return null;
+
+  deltaTransfers.delete(delta.streamId);
+  const patch = decodeDeltaChunks(transfer.chunks);
+  const state = applyRenderStatePatch(sessionStates.get(delta.streamId), patch);
+  sessionStates.set(delta.streamId, state);
+  return { streamId: delta.streamId, state };
+}
+
+function shouldMarkUnread(payload, changed, selectedId) {
+  return Boolean(changed && payload.activity !== false && changed.streamId !== selectedId);
+}
+
+function applyHubPayload(payload) {
+	const focusedStreamId = document.activeElement?.classList?.contains("session-tab")
+		? document.activeElement.dataset.streamId
+		: null;
+	const knownStreamIds = new Set([
+		...sessionStates.keys(),
+		...sessionViews.keys(),
+		...unreadSessions,
+		...deltaTransfers.keys(),
+	]);
+	if (payload.type === "bootstrap") {
+		deltaTransfers.clear();
+		sessionStates.clear();
+	}
+	const updatedStateIds = new Set();
+	if (Array.isArray(payload.states)) {
+		for (const entry of payload.states) {
+			sessionStates.set(entry.streamId, entry.state);
+			updatedStateIds.add(entry.streamId);
+		}
+	}
+  if (payload.changed) deltaTransfers.delete(payload.changed.streamId);
+  const changed = payload.delta ? applyDelta(payload.delta) : payload.changed;
+	  if (changed) {
+			sessionStates.set(changed.streamId, changed.state);
+			if (shouldMarkUnread(payload, changed, selectedStreamId)) unreadSessions.add(changed.streamId);
+	  }
+	let available = new Set(sessionSummaries.map((summary) => summary.streamId));
+	if (Array.isArray(payload.sessions)) {
+		sessionSummaries = payload.sessions;
+		available = new Set(sessionSummaries.map((summary) => summary.streamId));
+		for (const streamId of sessionStates.keys()) knownStreamIds.add(streamId);
+		for (const streamId of knownStreamIds) {
+			if (available.has(streamId)) continue;
+			sessionStates.delete(streamId);
+			sessionViews.delete(streamId);
+			unreadSessions.delete(streamId);
+			deltaTransfers.delete(streamId);
+		}
+	}
+	activeStreamId = payload.activeStreamId || null;
+	if (detailSelection && !sessionStates.has(detailSelection.streamId)) closeDetail();
+
+  let target = available.has(selectedStreamId) ? selectedStreamId : null;
+  if (followActive) {
+    target = activeStreamId && sessionStates.has(activeStreamId)
+      ? activeStreamId
+      : sessionSummaries.find((summary) => summary.active && sessionStates.has(summary.streamId))?.streamId || target;
+  }
+  target ||= sessionSummaries.find((summary) => sessionStates.has(summary.streamId))?.streamId || null;
+
+	renderSessionTabs();
+	if (target && target !== selectedStreamId) selectSession(target);
+	else if (changed && changed.streamId === selectedStreamId) applyPayload(changed.state, true);
+	else if (target && updatedStateIds.has(target)) applyPayload(sessionStates.get(target), false);
+	else if (!target && selectedStreamId) {
+		clearGraph();
+		selectedStreamId = null;
+		currentPayload = null;
+		$("#empty-state").classList.remove("hidden");
+	}
+
+	if (focusedStreamId && !available.has(focusedStreamId)) {
+		const replacement = [...sessionTabs.children]
+			.find((tab) => tab.dataset.streamId === selectedStreamId);
+		(replacement || followToggle).focus();
+	}
+}
+
+function nodeText(item, index) {
   const meta = kindMeta[item.kind] || kindMeta.unknown;
-  const element = document.createElement("button");
-  element.type = "button";
-  element.className = "node";
-  element.style.setProperty("--node-color", meta.color);
+  const state = item.pending ? "awaiting context" : item.active ? "active context" : "outside context";
+  return {
+    kind: meta.label,
+    title: item.summary ? "Compaction summary" : item.toolName || meta.label,
+    detail: item.toolName ? `${state} - ${item.toolName}` : `${state} - history ${index + 1}`,
+  };
+}
+
+function nodeDimensions() {
+		  return {
+			  width: isMobileLayout() ? NODE_WIDTH_MOBILE : NODE_WIDTH_DESKTOP,
+			  height: isShortLandscapeLayout() ? NODE_HEIGHT_SHORT_LANDSCAPE : NODE_HEIGHT,
+		  };
+}
+
+function createNode(item, index, target, dimensions, revealAt = 0) {
+	  const element = document.createElement("div");
+	  element.className = "node";
 
   const kind = document.createElement("span");
   kind.className = "node-kind";
   const title = document.createElement("span");
   title.className = "node-title";
-  const detail = document.createElement("span");
-  detail.className = "node-detail";
-  element.append(kind, title, detail);
-  world.appendChild(element);
+	  const detail = document.createElement("span");
+	  detail.className = "node-detail";
+	  element.append(kind, title, detail);
 
+  const revealed = revealAt === 0;
   const node = {
     key: itemKey(item), item, index, element, kind, title, detail,
     x: target.x + (viewMode === "window" ? 180 : 0),
@@ -590,16 +1443,25 @@ function createNode(item, index, target) {
     homeY: target.homeY,
     focusX: target.focusX,
     focusY: target.focusY,
-    width: element.offsetWidth || 176,
-    height: element.offsetHeight || 92,
+	    width: dimensions.width,
+	    height: dimensions.height,
     opacity: 0,
-    targetOpacity: 1,
-    floatPhase: index * 1.83,
+    targetOpacity: revealed ? 1 : 0,
+    revealOpacity: 1,
+    revealAt,
+    revealed,
+    pendingDiff: null,
     dragX: 0,
     dragY: 0,
     dragging: false,
+    edgeKeys: new Set(),
     removeTimer: null,
   };
+
+  if (!revealed) {
+    element.classList.add("queued");
+    element.setAttribute("aria-hidden", "true");
+  }
 
   attachNodeInteraction(node);
   updateNodeContent(node, item, index);
@@ -607,22 +1469,45 @@ function createNode(item, index, target) {
 }
 
 function updateNodeContent(node, item, index) {
-  const meta = kindMeta[item.kind] || kindMeta.unknown;
-  const text = nodeText(item, index);
-  node.item = item;
-  node.index = index;
-  node.element.style.setProperty("--node-color", meta.color);
-	node.element.classList.toggle("active", Boolean(item.active));
-	node.element.classList.toggle("inactive", !item.active);
-	node.element.classList.toggle("memory", item.kind === "memory");
+	  const meta = kindMeta[item.kind] || kindMeta.unknown;
+	  const text = nodeText(item, index);
+	  const active = Boolean(item.active);
+	  const pending = Boolean(item.pending);
+	  const memory = item.kind === "memory";
+	  node.item = item;
+	  node.index = index;
+	  if (
+	    node.content
+	    && node.content.color === meta.color
+	    && node.content.kind === text.kind
+	    && node.content.title === text.title
+	    && node.content.detail === text.detail
+	    && node.content.active === active
+	    && node.content.pending === pending
+	    && node.content.memory === memory
+	  ) return;
+	  node.content = { color: meta.color, kind: text.kind, title: text.title, detail: text.detail, active, pending, memory };
+	  node.element.style.setProperty("--node-color", meta.color);
+		node.element.classList.toggle("active", active);
+		node.element.classList.toggle("inactive", !active && !pending);
+		node.element.classList.toggle("pending-context", pending);
+		node.element.classList.toggle("memory", memory);
+	node.element.dataset.itemId = node.key;
+	node.element.dataset.contextState = item.pending ? "pending" : item.active ? "active" : "history";
   node.kind.textContent = text.kind;
   node.title.textContent = text.title;
   node.detail.textContent = text.detail;
-  node.element.setAttribute("aria-label", `${text.kind}: ${text.title}, ${text.detail}`);
 }
 
 function homePosition(index) {
-  const mobile = innerWidth < 720;
+		  if (isShortLandscapeLayout()) {
+			  const columns = 5;
+			  const row = Math.floor(index / columns);
+			  const offset = index % columns;
+			  const column = row % 2 === 0 ? offset : columns - 1 - offset;
+			  return { x: 210 + column * 190, y: 230 + row * 96 };
+		  }
+		  const mobile = isMobileLayout();
   const columns = mobile ? 2 : 6;
   const row = Math.floor(index / columns);
   const offset = index % columns;
@@ -633,12 +1518,25 @@ function homePosition(index) {
   };
 }
 
-function focusPosition(item, index, count) {
+function focusPosition(item, index, count, visibleCount = count) {
   const meta = kindMeta[item.kind] || kindMeta.unknown;
-  if (innerWidth < 720) {
+		  const compactColumns = shortLandscapeColumns(innerWidth, innerHeight, visibleCount);
+		  if (compactColumns > 0) {
+			  const row = Math.floor(index / compactColumns);
+			  const offset = index % compactColumns;
+			  const column = row % 2 === 0 ? offset : compactColumns - 1 - offset;
+			  return {
+				  x: 210 + column * 190,
+				  y: 230 + row * 96 + meta.lane * 0.04,
+			  };
+		  }
+		  if (isMobileLayout()) {
+    const columns = count > 6 ? 2 : 1;
+    const row = Math.floor(index / columns);
+    const column = index % columns;
     return {
-      x: 360,
-      y: 245 + index * 130 + meta.lane * 0.06,
+      x: columns === 1 ? 360 : 250 + column * 210,
+      y: 245 + row * 132 + meta.lane * 0.06,
     };
   }
 	const columns = Math.min(7, Math.max(1, count));
@@ -651,10 +1549,52 @@ function focusPosition(item, index, count) {
   };
 }
 
-function nodeLayout(item, historyIndex, activeIndex, activeCount) {
+function pendingPosition(item, index, count, activeCount) {
+  const meta = kindMeta[item.kind] || kindMeta.unknown;
+		  const compactColumns = shortLandscapeColumns(innerWidth, innerHeight, activeCount + count);
+		  if (compactColumns > 0) {
+			  const absoluteIndex = activeCount + index;
+			  const row = Math.floor(absoluteIndex / compactColumns);
+			  const offset = absoluteIndex % compactColumns;
+			  const column = row % 2 === 0 ? offset : compactColumns - 1 - offset;
+			  return {
+				  x: 210 + column * 190,
+				  y: 230 + row * 96 + meta.lane * 0.04,
+			  };
+		  }
+		  if (isMobileLayout()) {
+    const activeColumns = activeCount > 6 ? 2 : 1;
+    const activeRows = Math.max(1, Math.ceil(activeCount / activeColumns));
+    const columns = count > 4 ? 2 : 1;
+    return {
+      x: columns === 1 ? 360 : 250 + (index % columns) * 210,
+      y: 245 + activeRows * 132 + 92 + Math.floor(index / columns) * 132 + meta.lane * 0.04,
+    };
+  }
+  const activeColumns = Math.min(7, Math.max(1, activeCount));
+  const activeRows = Math.max(1, Math.ceil(activeCount / activeColumns));
+  const columns = Math.min(5, Math.max(1, count));
+  return {
+    x: 250 + (index % columns) * 224,
+    y: 285 + activeRows * 146 + 82 + Math.floor(index / columns) * 138 + meta.lane * 0.16,
+  };
+}
+
+function nodeLayout(item, historyIndex, activeIndex, activeCount, pendingIndex, pendingCount) {
   const home = homePosition(historyIndex);
-  const focus = activeIndex >= 0 ? focusPosition(item, activeIndex, activeCount) : home;
-  const target = viewMode === "window" && activeIndex >= 0 ? focus : home;
+	  const focus = activeIndex >= 0
+		? focusPosition(item, activeIndex, activeCount, activeCount + pendingCount)
+		: home;
+  const pending = pendingIndex >= 0
+    ? pendingPosition(item, pendingIndex, pendingCount, activeCount)
+    : home;
+  const target = viewMode === "window"
+    ? activeIndex >= 0
+      ? focus
+      : pendingIndex >= 0
+        ? pending
+        : home
+    : home;
   return {
     x: target.x,
     y: target.y,
@@ -662,131 +1602,257 @@ function nodeLayout(item, historyIndex, activeIndex, activeCount) {
     homeY: home.y,
     focusX: focus.x,
     focusY: focus.y,
+    pendingX: pending.x,
+    pendingY: pending.y,
   };
 }
 
 function flashDiff(node, diff) {
-  if (!diff) return;
+	  if (!diff || reducedMotion) return;
   node.element.classList.remove("entered", "exited");
   void node.element.offsetWidth;
   node.element.classList.add(diff);
-  setTimeout(() => node.element.classList.remove(diff), reducedMotion ? 20 : 680);
+	  setTimeout(() => node.element.classList.remove(diff), 680);
 }
 
-function reconcileNodes(timeline) {
-  const items = timeline.history || [];
+function revealNode(node) {
+  node.revealed = true;
+  node.revealAt = 0;
+  node.targetOpacity = node.revealOpacity;
+  node.element.classList.remove("queued");
+  node.element.dataset.revealed = "true";
+  if (node.element.dataset.revealOrder !== undefined) {
+    node.element.dataset.revealedAt = String(Math.round(performance.now()));
+  }
+  node.element.removeAttribute("aria-hidden");
+  if (node.pendingDiff) flashDiff(node, node.pendingDiff);
+  node.pendingDiff = null;
+}
+
+function staggerStep(itemCount) {
+  return itemCount > 1 ? Math.min(MAX_STAGGER_STEP_MS, MAX_STAGGER_TOTAL_MS / (itemCount - 1)) : 0;
+}
+
+function reconcileNodes(timeline, animateNew = false) {
+	  const items = timeline.history || [];
+	  const dimensions = nodeDimensions();
   const activeOrder = new Map((timeline.activeIds || []).map((id, index) => [String(id), index]));
   const activeIds = new Set(activeOrder.keys());
+	const pendingKeys = (timeline.pendingIds || items.filter((item) => item.pending).map(itemKey)).map(String);
+	const pendingOrder = new Map(pendingKeys.map((id, index) => [id, index]));
 	const summaryTargets = new Set((timeline.summaryEdges || []).map((edge) => String(edge.to)));
   const enteredIds = new Set((timeline.enteredIds || []).map(String));
   const exitedIds = new Set((timeline.exitedIds || []).map(String));
-	const animateDiff = timeline.revision !== lastAnimatedRevision;
-  const wanted = new Set();
-  items.forEach((item, index) => {
+	  const animateDiff = timeline.revision !== lastAnimatedRevision;
+	  const newKeys = items.map(itemKey).filter((key) => !nodes.has(key));
+	  const animateCreated = animateNew && animateDiff && !reducedMotion && newKeys.length <= MAX_ANIMATED_NODES;
+	  let diffAnimationBudget = animateDiff && !reducedMotion ? MAX_ANIMATED_NODES : 0;
+	  const step = animateCreated ? staggerStep(newKeys.length) : 0;
+  const now = performance.now();
+  const revealTimes = new Map(
+    step > 0 ? newKeys.slice(1).map((key, index) => [key, now + (index + 1) * step]) : [],
+  );
+  const revealOrders = new Map(step > 0 ? newKeys.map((key, index) => [key, index]) : []);
+  if (step > 0) {
+    world.dataset.lastStaggerCount = String(newKeys.length);
+    world.dataset.lastStaggerStep = String(Math.round(step));
+    world.dataset.lastStaggerDuration = String(Math.round(step * (newKeys.length - 1)));
+	  }
+	  const wanted = new Set();
+	  const newNodeFragment = document.createDocumentFragment();
+	  let createdNodes = 0;
+	  items.forEach((item, index) => {
     const key = itemKey(item);
     wanted.add(key);
 	const activeIndex = activeOrder.get(key) ?? -1;
 	const active = activeIds.has(key);
-	const displayItem = { ...item, active, summary: Boolean(item.synthetic) || summaryTargets.has(key) };
-	const target = nodeLayout(displayItem, index, activeIndex, activeOrder.size);
+	const pendingIndex = pendingOrder.get(key) ?? -1;
+	const pending = pendingIndex >= 0;
+	const displayItem = { ...item, active, pending, summary: Boolean(item.synthetic) || summaryTargets.has(key) };
+	const target = nodeLayout(
+		displayItem,
+		index,
+		activeIndex,
+		activeOrder.size,
+		pendingIndex,
+		pendingOrder.size,
+	);
     let node = nodes.get(key);
-    if (!node) {
-		node = createNode(displayItem, index, target);
-      nodes.set(key, node);
+    const created = !node;
+	    if (!node) {
+			node = createNode(displayItem, index, target, dimensions, revealTimes.get(key) || 0);
+	      nodes.set(key, node);
+	      newNodeFragment.appendChild(node.element);
+	      createdNodes += 1;
+		const revealOrder = revealOrders.get(key);
+		if (revealOrder !== undefined) {
+			node.element.dataset.revealOrder = String(revealOrder);
+			node.element.dataset.revealed = String(node.revealed);
+			if (node.revealed) node.element.dataset.revealedAt = String(Math.round(now));
+		}
     } else {
       if (node.removeTimer) clearTimeout(node.removeTimer);
       node.removeTimer = null;
-      node.element.removeAttribute("aria-hidden");
-      node.element.tabIndex = 0;
+		if (node.revealed) {
+			node.element.removeAttribute("aria-hidden");
+		}
 		updateNodeContent(node, displayItem, index);
     }
 	node.homeX = target.homeX;
 	node.homeY = target.homeY;
 	node.focusX = target.focusX;
 	node.focusY = target.focusY;
-	node.width = node.element.offsetWidth || node.width;
-	node.height = node.element.offsetHeight || node.height;
+		node.pendingX = target.pendingX;
+		node.pendingY = target.pendingY;
+		if (node.width !== dimensions.width || node.height !== dimensions.height) {
+			node.width = dimensions.width;
+			node.height = dimensions.height;
+			for (const edgeKey of node.edgeKeys) dirtyEdges.add(edgeKey);
+		}
     node.targetX = target.x;
     node.targetY = target.y;
-	node.targetOpacity = active ? 1 : viewMode === "overview" ? 0.38 : 0.2;
-	if (animateDiff && enteredIds.has(key)) flashDiff(node, "entered");
-	else if (animateDiff && exitedIds.has(key)) flashDiff(node, "exited");
-    world.appendChild(node.element);
-  });
+		node.revealOpacity = active ? 1 : pending ? (viewMode === "overview" ? 0.62 : 0.82) : viewMode === "overview" ? 0.38 : 0.2;
+		if (node.revealed) node.targetOpacity = node.revealOpacity;
+		if (created && !animateCreated) {
+			node.x = node.targetX;
+			node.y = node.targetY;
+			node.opacity = node.targetOpacity;
+		}
+		const diff = enteredIds.has(key) ? "entered" : exitedIds.has(key) ? "exited" : null;
+		if (diff && diffAnimationBudget > 0) {
+			diffAnimationBudget -= 1;
+			if (created && !node.revealed) node.pendingDiff = diff;
+			else flashDiff(node, diff);
+		}
+    if (
+      created
+      || !node.revealed
+      || differs(node.x, node.targetX, POSITION_EPSILON)
+      || differs(node.y, node.targetY, POSITION_EPSILON)
+      || differs(node.opacity, node.targetOpacity, OPACITY_EPSILON)
+    ) markNodeMoving(node);
+	  });
+	  if (createdNodes > 0) world.appendChild(newNodeFragment);
 
   for (const [key, node] of nodes) {
     if (wanted.has(key) || node.removeTimer) continue;
+    node.revealed = true;
+    node.revealAt = 0;
+    node.pendingDiff = null;
     node.targetOpacity = 0;
     node.targetX -= 170;
     node.targetY += 34;
     node.element.setAttribute("aria-hidden", "true");
-    node.element.tabIndex = -1;
+    markNodeMoving(node);
     node.removeTimer = setTimeout(() => {
+      movingNodes.delete(node);
       node.element.remove();
       nodes.delete(key);
     }, reducedMotion ? 20 : 720);
   }
 
 	reconcileEdges(timeline, items, activeIds);
-	updateBounds(timeline, items, activeOrder);
+	updateBounds(timeline, items, activeOrder, pendingOrder);
 	lastAnimatedRevision = timeline.revision;
 }
 
 function reconcileEdges(timeline, items, activeIds) {
-  const desired = new Set();
-	const addEdge = (from, to, type) => {
-		if (!nodes.has(from) || !nodes.has(to)) return;
-		const key = `${type}:${from}->${to}`;
+	  const desired = new Set();
+		const newEdgeFragment = document.createDocumentFragment();
+		let createdEdges = 0;
+		const addEdge = (from, to, type) => {
+			if (!nodes.has(from) || !nodes.has(to)) return;
+		const key = JSON.stringify([type, from, to]);
 		desired.add(key);
 		const isActive = activeIds.has(from) && activeIds.has(to);
 		let edge = edges.get(key);
-		if (!edge) {
-			const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-			path.setAttribute("class", `edge ${type} pending`);
-			edgeGroup.appendChild(path);
-			edge = { key, from, to, type, path };
-			edges.set(key, edge);
-			requestAnimationFrame(() => path.classList.remove("pending"));
-		}
-		edge.path.classList.toggle("inactive", !isActive);
-	};
+			if (!edge) {
+				const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+				path.setAttribute("class", `edge ${type} pending`);
+					newEdgeFragment.appendChild(path);
+					createdEdges += 1;
+					edge = { key, from, to, type, path, active: null };
+					edges.set(key, edge);
+					dirtyEdges.add(key);
+					nodes.get(from).edgeKeys.add(key);
+					nodes.get(to).edgeKeys.add(key);
+				}
+				if (edge.active !== isActive) {
+					edge.active = isActive;
+					edge.path.classList.toggle("inactive", !isActive);
+				}
+			};
 	const keys = items.map(itemKey);
   for (let index = 1; index < keys.length; index += 1) {
 		addEdge(keys[index - 1], keys[index], "sequence");
   }
-	for (const edge of timeline.summaryEdges || []) addEdge(String(edge.from), String(edge.to), "summary");
+		for (const edge of timeline.summaryEdges || []) addEdge(String(edge.from), String(edge.to), "summary");
+		if (createdEdges > 0) edgeGroup.appendChild(newEdgeFragment);
 
   for (const [key, edge] of edges) {
     if (desired.has(key)) continue;
     edge.path.classList.add("pending");
     setTimeout(() => edge.path.remove(), reducedMotion ? 20 : 280);
+    nodes.get(edge.from)?.edgeKeys.delete(key);
+    nodes.get(edge.to)?.edgeKeys.delete(key);
+    dirtyEdges.delete(key);
     edges.delete(key);
   }
+	if (dirtyEdges.size) scheduleRender();
 }
 
 function boundsFor(positions) {
   if (!positions.length) return { x: 180, y: 180, width: 520, height: 280 };
-  const minX = Math.min(...positions.map((point) => point.x)) - 122;
-  const maxX = Math.max(...positions.map((point) => point.x)) + 122;
-  const minY = Math.min(...positions.map((point) => point.y)) - 104;
-  const maxY = Math.max(...positions.map((point) => point.y)) + 104;
+	  const compact = isShortLandscapeLayout();
+	  const paddingX = compact ? 94 : 122;
+	  const paddingY = compact ? 44 : 104;
+	  const minX = Math.min(...positions.map((point) => point.x)) - paddingX;
+	  const maxX = Math.max(...positions.map((point) => point.x)) + paddingX;
+	  const minY = Math.min(...positions.map((point) => point.y)) - paddingY;
+	  const maxY = Math.max(...positions.map((point) => point.y)) + paddingY;
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }
 
-function updateBounds(timeline, items, activeOrder) {
+function mergeBounds(left, right) {
+  const minX = Math.min(left.x, right.x);
+  const minY = Math.min(left.y, right.y);
+  const maxX = Math.max(left.x + left.width, right.x + right.width);
+  const maxY = Math.max(left.y + left.height, right.y + right.height);
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+function updateBounds(timeline, items, activeOrder, pendingOrder) {
   const homePositions = items.map((_, index) => homePosition(index));
 	const itemsById = new Map(items.map((item) => [itemKey(item), item]));
-  const focusPositions = (timeline.activeIds || []).map((id, index) => {
-	const item = itemsById.get(String(id));
-	return item ? focusPosition(item, index, activeOrder.size) : null;
+	const visibleCount = activeOrder.size + pendingOrder.size;
+	const focusPositions = (timeline.activeIds || []).map((id, index) => {
+		const item = itemsById.get(String(id));
+		return item ? focusPosition(item, index, activeOrder.size, visibleCount) : null;
   }).filter(Boolean);
-	const visiblePositions = viewMode === "window" ? focusPositions : homePositions;
-	const visibleBounds = boundsFor(visiblePositions);
-	const worldBounds = boundsFor([...homePositions, ...focusPositions]);
-	const { x: minX, y: minY, width, height } = visibleBounds;
+	const pendingPositions = [...pendingOrder].map(([id, index]) => {
+		const item = itemsById.get(id);
+		return item ? pendingPosition(item, index, pendingOrder.size, activeOrder.size) : null;
+	}).filter(Boolean);
+	const activeBounds = boundsFor(focusPositions);
+	const pendingBounds = pendingPositions.length ? boundsFor(pendingPositions) : null;
+	const visibleBounds = viewMode === "window"
+		? pendingBounds
+			? mergeBounds(activeBounds, pendingBounds)
+			: activeBounds
+		: boundsFor(homePositions);
+	const worldBounds = boundsFor([...homePositions, ...focusPositions, ...pendingPositions]);
 	const maxX = worldBounds.x + worldBounds.width;
 	const maxY = worldBounds.y + worldBounds.height;
-	frameTarget = { x: minX, y: minY, width, height };
+	if (
+		differs(frameTarget.x, activeBounds.x, POSITION_EPSILON)
+		|| differs(frameTarget.y, activeBounds.y, POSITION_EPSILON)
+		|| differs(frameTarget.width, activeBounds.width, POSITION_EPSILON)
+		|| differs(frameTarget.height, activeBounds.height, POSITION_EPSILON)
+	) {
+		frameTarget = activeBounds;
+		markFrameDirty();
+	}
+	fitTarget = visibleBounds;
 
   const worldWidth = Math.max(1000, maxX + 260);
   const worldHeight = Math.max(800, maxY + 240);
@@ -799,19 +1865,26 @@ function updateBounds(timeline, items, activeOrder) {
 
 function fitView(reset = true) {
   if (reset) freeCamera = false;
-  const availableWidth = innerWidth - 48;
-  const availableHeight = innerHeight - (innerWidth < 720 ? 190 : 150);
+	  const compact = isShortLandscapeLayout();
+	  const availableWidth = innerWidth - (compact ? 24 : 48);
+		const viewport = graphViewport();
+	  const padding = compact ? 32 : 100;
   const scale = Math.min(
-    availableWidth / Math.max(320, frameTarget.width + 100),
-    availableHeight / Math.max(260, frameTarget.height + 100),
+	    availableWidth / Math.max(compact ? 180 : 320, fitTarget.width + padding),
+		viewport.height / Math.max(compact ? 120 : 260, fitTarget.height + padding),
     1.12,
   );
-  cameraTarget = {
-    x: frameTarget.x + frameTarget.width / 2,
-    y: frameTarget.y + frameTarget.height / 2 + 8,
-    scale: Math.max(0.16, scale),
+  const nextTarget = {
+    x: fitTarget.x + fitTarget.width / 2,
+    y: fitTarget.y + fitTarget.height / 2 + 8,
+	    scale: Math.max(MIN_CAMERA_SCALE, scale),
   };
+	const targetChanged = differs(cameraTarget.x, nextTarget.x, POSITION_EPSILON)
+		|| differs(cameraTarget.y, nextTarget.y, POSITION_EPSILON)
+		|| differs(cameraTarget.scale, nextTarget.scale, SCALE_EPSILON);
+	cameraTarget = nextTarget;
   if (reducedMotion) camera = { ...cameraTarget };
+	if (targetChanged || cameraDirty) markCameraDirty();
 }
 
 function borderPoint(node, targetX, targetY) {
@@ -828,80 +1901,190 @@ function borderPoint(node, targetX, targetY) {
   return [node.renderX + dx * scale, node.renderY + dy * scale];
 }
 
+function updateEdge(edge) {
+  const from = nodes.get(edge.from);
+  const to = nodes.get(edge.to);
+  if (!from || !to || from.renderX === undefined || to.renderX === undefined) return false;
+  edge.path.classList.toggle("pending", !from.revealed || !to.revealed);
+  const [startX, startY] = borderPoint(from, to.renderX, to.renderY);
+  const [endX, endY] = borderPoint(to, from.renderX, from.renderY);
+  const midX = (startX + endX) / 2;
+  const curveSize = edge.type === "summary" ? 34 : 18;
+  const curve = (from.index % 2 === 0 ? -1 : 1) * curveSize;
+  edge.path.setAttribute("d", `M ${startX} ${startY} Q ${midX} ${(startY + endY) / 2 + curve} ${endX} ${endY}`);
+  return true;
+}
+
 function renderFrame(time) {
-  const ease = reducedMotion ? 1 : 0.085;
-  camera.x += (cameraTarget.x - camera.x) * ease;
-  camera.y += (cameraTarget.y - camera.y) * ease;
-  camera.scale += (cameraTarget.scale - camera.scale) * ease;
+  animationFrameId = null;
+  animationFrameUsesTimeout = false;
+  renderLoopActive = true;
+  const settleImmediately = reducedMotion || document.hidden;
+  const ease = settleImmediately ? 1 : 0.085;
+  const opacityEase = settleImmediately ? 1 : 0.12;
+  let nodeUpdates = 0;
+  let edgeUpdates = 0;
+  let keepAlive = false;
 
-  const usableHeight = innerHeight - (innerWidth < 720 ? 92 : 64);
-  world.style.transform = `translate(${innerWidth / 2 - camera.x * camera.scale}px, ${usableHeight / 2 - camera.y * camera.scale}px) scale(${camera.scale})`;
+  const cameraMoving = cameraDirty
+    || differs(camera.x, cameraTarget.x, POSITION_EPSILON)
+    || differs(camera.y, cameraTarget.y, POSITION_EPSILON)
+    || differs(camera.scale, cameraTarget.scale, SCALE_EPSILON);
+	if (cameraMoving) {
+		const viewport = graphViewport();
+		camera.x = approach(camera.x, cameraTarget.x, ease, POSITION_EPSILON);
+    camera.y = approach(camera.y, cameraTarget.y, ease, POSITION_EPSILON);
+    camera.scale = approach(camera.scale, cameraTarget.scale, ease, SCALE_EPSILON);
+		world.style.transform = `translate(${innerWidth / 2 - camera.x * camera.scale}px, ${viewport.centerY - camera.y * camera.scale}px) scale(${camera.scale})`;
+    cameraDirty = false;
+    if (
+      differs(camera.x, cameraTarget.x, POSITION_EPSILON)
+      || differs(camera.y, cameraTarget.y, POSITION_EPSILON)
+      || differs(camera.scale, cameraTarget.scale, SCALE_EPSILON)
+    ) keepAlive = true;
+    else world.classList.remove("moving");
+  }
 
-  frameBox.x += (frameTarget.x - frameBox.x) * ease;
-  frameBox.y += (frameTarget.y - frameBox.y) * ease;
-  frameBox.width += (frameTarget.width - frameBox.width) * ease;
-  frameBox.height += (frameTarget.height - frameBox.height) * ease;
-  windowFrame.setAttribute("x", String(frameBox.x));
-  windowFrame.setAttribute("y", String(frameBox.y));
-  windowFrame.setAttribute("width", String(frameBox.width));
-  windowFrame.setAttribute("height", String(frameBox.height));
+  const frameMoving = frameDirty
+    || differs(frameBox.x, frameTarget.x, POSITION_EPSILON)
+    || differs(frameBox.y, frameTarget.y, POSITION_EPSILON)
+    || differs(frameBox.width, frameTarget.width, POSITION_EPSILON)
+    || differs(frameBox.height, frameTarget.height, POSITION_EPSILON);
+  if (frameMoving) {
+    frameBox.x = approach(frameBox.x, frameTarget.x, ease, POSITION_EPSILON);
+    frameBox.y = approach(frameBox.y, frameTarget.y, ease, POSITION_EPSILON);
+    frameBox.width = approach(frameBox.width, frameTarget.width, ease, POSITION_EPSILON);
+    frameBox.height = approach(frameBox.height, frameTarget.height, ease, POSITION_EPSILON);
+    windowFrame.setAttribute("x", String(frameBox.x));
+    windowFrame.setAttribute("y", String(frameBox.y));
+    windowFrame.setAttribute("width", String(frameBox.width));
+    windowFrame.setAttribute("height", String(frameBox.height));
+    frameDirty = false;
+    if (
+      differs(frameBox.x, frameTarget.x, POSITION_EPSILON)
+      || differs(frameBox.y, frameTarget.y, POSITION_EPSILON)
+      || differs(frameBox.width, frameTarget.width, POSITION_EPSILON)
+      || differs(frameBox.height, frameTarget.height, POSITION_EPSILON)
+    ) keepAlive = true;
+  }
 
-  for (const node of nodes.values()) {
-    node.x += (node.targetX - node.x) * ease;
-    node.y += (node.targetY - node.y) * ease;
-    node.opacity += (node.targetOpacity - node.opacity) * (reducedMotion ? 1 : 0.12);
+  const frameNodes = [...movingNodes];
+  movingNodes.clear();
+  for (const node of frameNodes) {
+    if (nodes.get(node.key) !== node) continue;
+    const previousRenderX = node.renderX;
+    const previousRenderY = node.renderY;
+    const previousOpacity = node.opacity;
+    const wasRevealed = node.revealed;
+
+    if (!node.revealed && (settleImmediately || time >= node.revealAt)) revealNode(node);
+    if (node.revealed) {
+      node.x = approach(node.x, node.targetX, ease, POSITION_EPSILON);
+      node.y = approach(node.y, node.targetY, ease, POSITION_EPSILON);
+    }
+    node.opacity = approach(node.opacity, node.targetOpacity, opacityEase, OPACITY_EPSILON);
     if (!node.dragging) {
-      node.dragX *= reducedMotion ? 0 : 0.88;
-      node.dragY *= reducedMotion ? 0 : 0.88;
+      node.dragX = approach(node.dragX, 0, opacityEase, POSITION_EPSILON);
+      node.dragY = approach(node.dragY, 0, opacityEase, POSITION_EPSILON);
     }
-    const floatX = reducedMotion ? 0 : Math.sin(time * 0.00055 + node.floatPhase) * 3.5;
-    const floatY = reducedMotion ? 0 : Math.cos(time * 0.00045 + node.floatPhase * 1.4) * 3.5;
-    node.renderX = node.x + node.dragX + floatX;
-    node.renderY = node.y + node.dragY + floatY;
-    node.element.style.opacity = String(node.opacity);
-    node.element.style.transform = `translate(${node.renderX - node.width / 2}px, ${node.renderY - node.height / 2}px)`;
+    node.renderX = node.x + node.dragX;
+    node.renderY = node.y + node.dragY;
+
+    const geometryChanged = previousRenderX === undefined
+      || previousRenderY === undefined
+      || differs(previousRenderX, node.renderX, POSITION_EPSILON)
+      || differs(previousRenderY, node.renderY, POSITION_EPSILON)
+      || wasRevealed !== node.revealed;
+    const opacityChanged = differs(previousOpacity, node.opacity, OPACITY_EPSILON);
+    if (geometryChanged || opacityChanged) {
+      node.element.style.opacity = String(node.opacity);
+      node.element.style.transform = `translate(${node.renderX - node.width / 2}px, ${node.renderY - node.height / 2}px)`;
+      nodeUpdates += 1;
+    }
+    if (geometryChanged) {
+      for (const edgeKey of node.edgeKeys) dirtyEdges.add(edgeKey);
+    }
+
+    const waitingToReveal = !node.revealed && node.revealAt > time;
+    const stillMoving = waitingToReveal
+      || node.dragging
+      || (node.revealed && (
+        differs(node.x, node.targetX, POSITION_EPSILON)
+        || differs(node.y, node.targetY, POSITION_EPSILON)
+      ))
+      || differs(node.opacity, node.targetOpacity, OPACITY_EPSILON)
+      || (!node.dragging && (
+        differs(node.dragX, 0, POSITION_EPSILON)
+        || differs(node.dragY, 0, POSITION_EPSILON)
+      ));
+    if (stillMoving) {
+      movingNodes.add(node);
+      keepAlive = true;
+    } else {
+      node.element.classList.remove("moving");
+    }
   }
 
-  if (hoveredNode) positionTooltip(hoveredNode);
-
-  frameTick += 1;
-  if (frameTick % 2 === 0) {
-    for (const edge of edges.values()) {
-      const from = nodes.get(edge.from);
-      const to = nodes.get(edge.to);
-      if (!from || !to || from.renderX === undefined || to.renderX === undefined) continue;
-      const [startX, startY] = borderPoint(from, to.renderX, to.renderY);
-      const [endX, endY] = borderPoint(to, from.renderX, from.renderY);
-      const midX = (startX + endX) / 2;
-		const curveSize = edge.type === "summary" ? 34 : 18;
-		const curve = (from.index % 2 === 0 ? -1 : 1) * curveSize;
-      edge.path.setAttribute("d", `M ${startX} ${startY} Q ${midX} ${(startY + endY) / 2 + curve} ${endX} ${endY}`);
-    }
+  const frameEdges = [...dirtyEdges];
+  dirtyEdges.clear();
+  for (const edgeKey of frameEdges) {
+    const edge = edges.get(edgeKey);
+    if (edge && updateEdge(edge)) edgeUpdates += 1;
   }
 
-  requestAnimationFrame(renderFrame);
+  if (hoveredNode && (cameraMoving || nodeUpdates > 0)) positionTooltip(hoveredNode);
+
+  renderStats.frames += 1;
+  renderStats.totalNodeUpdates += nodeUpdates;
+  renderStats.totalEdgeUpdates += edgeUpdates;
+  renderStats.lastFrameNodeUpdates = nodeUpdates;
+  renderStats.lastFrameEdgeUpdates = edgeUpdates;
+  renderStats.peakFrameNodeUpdates = Math.max(renderStats.peakFrameNodeUpdates, nodeUpdates);
+  renderStats.peakFrameEdgeUpdates = Math.max(renderStats.peakFrameEdgeUpdates, edgeUpdates);
+  renderStats.lastFrameAt = time;
+
+  if (keepAlive || movingNodes.size || dirtyEdges.size || cameraDirty || frameDirty) {
+    scheduleRender();
+  } else {
+    renderLoopActive = false;
+    renderStats.sleepingSince = time;
+  }
 }
 
 function attachNodeInteraction(node) {
   let drag = null;
   node.element.addEventListener("pointerdown", (event) => {
     event.stopPropagation();
-    drag = { x: event.clientX, y: event.clientY, originX: node.dragX, originY: node.dragY };
+    drag = {
+      x: event.clientX,
+      y: event.clientY,
+      originX: node.dragX,
+      originY: node.dragY,
+      moved: false,
+      canOpen: event.button === 0 || event.pointerType === "touch",
+    };
     node.dragging = true;
+    markNodeMoving(node);
     try { node.element.setPointerCapture(event.pointerId); } catch (_) {}
   });
   node.element.addEventListener("pointermove", (event) => {
     if (!drag) return;
+    if (Math.abs(event.clientX - drag.x) + Math.abs(event.clientY - drag.y) > 5) drag.moved = true;
     node.dragX = drag.originX + (event.clientX - drag.x) / camera.scale;
     node.dragY = drag.originY + (event.clientY - drag.y) / camera.scale;
+    markNodeMoving(node);
   });
-  const release = () => { drag = null; node.dragging = false; };
-  node.element.addEventListener("pointerup", release);
-  node.element.addEventListener("pointercancel", release);
+  const release = (open) => {
+    const shouldOpen = Boolean(open && drag?.canOpen && !drag.moved);
+    drag = null;
+    node.dragging = false;
+    markNodeMoving(node);
+    if (shouldOpen) openDetail(node);
+  };
+  node.element.addEventListener("pointerup", () => release(true));
+  node.element.addEventListener("pointercancel", () => release(false));
   node.element.addEventListener("pointerenter", () => showTooltip(node));
   node.element.addEventListener("pointerleave", hideTooltip);
-  node.element.addEventListener("focus", () => showTooltip(node));
-  node.element.addEventListener("blur", hideTooltip);
 }
 
 function tooltipText(node) {
@@ -932,6 +2115,146 @@ function hideTooltip() {
   hoveredNode = null;
   tooltip.classList.remove("visible");
 }
+
+function detailSelectionMatches(selection, streamId, itemId) {
+  return Boolean(
+    selection
+    && streamId
+    && selection.streamId === streamId
+    && selection.itemId === itemId
+  );
+}
+
+function currentDetailItem() {
+	if (!detailSelection || !currentPayload) return null;
+	const detailItemId = detailSelection.itemId;
+	if (!detailSelectionMatches(detailSelection, selectedStreamId, detailItemId)) return null;
+  const timeline = timelineFrom(currentPayload);
+  const item = timeline.history.find((entry) => itemKey(entry) === detailItemId);
+  if (!item) return null;
+  const active = (timeline.activeIds || []).map(String).includes(detailItemId);
+  const pending = (timeline.pendingIds || []).map(String).includes(detailItemId) || Boolean(item.pending);
+  const summary = Boolean(item.synthetic)
+    || (timeline.summaryEdges || []).some((edge) => String(edge.to) === detailItemId);
+  return { ...item, active, pending, summary };
+}
+
+function detailState(item) {
+  if (item.pending) return "awaiting context";
+  if (item.active) return "in current context";
+  return "outside current context";
+}
+
+function prettyJson(value) {
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2);
+  } catch (_) {
+    return value;
+  }
+}
+
+function appendDetailBlock(item, block, index, modelRole) {
+  const section = document.createElement("section");
+  section.className = "detail-block";
+  section.dataset.type = block.type;
+  const label = document.createElement("span");
+  label.className = "detail-block-label";
+  section.appendChild(label);
+
+  if (block.type === "image") {
+	label.textContent = `${modelRole} - Image ${index + 1} - ${block.mimeType}`;
+    if (/^image\/[a-z0-9.+-]+$/i.test(block.mimeType) && typeof block.data === "string") {
+      const image = document.createElement("img");
+      image.alt = `${item.kind} context image`;
+      image.loading = "lazy";
+      image.src = `data:${block.mimeType};base64,${block.data}`;
+      section.appendChild(image);
+    }
+  } else {
+    const text = document.createElement("pre");
+	if (block.type === "toolCall") {
+	  label.textContent = `${modelRole} - Tool call - ${block.name}`;
+      text.textContent = prettyJson(block.argumentsJson);
+	} else if (block.type === "thinking") {
+	  label.textContent = block.redacted
+	    ? `${modelRole} - Thinking - redacted`
+	    : `${modelRole} - Thinking`;
+      text.textContent = block.text;
+	} else {
+	  label.textContent = item.kind === "system"
+	    ? `${modelRole} - System prompt`
+	    : `${modelRole} - Content`;
+      text.textContent = block.text;
+    }
+    section.appendChild(text);
+  }
+  detailContent.appendChild(section);
+}
+
+function syncDetailPanel() {
+  const item = currentDetailItem();
+  if (!item) {
+    closeDetail();
+    return;
+  }
+  const meta = kindMeta[item.kind] || kindMeta.unknown;
+  const text = nodeText(item, item.order || 0);
+  detailPanel.style.setProperty("--detail-color", meta.color);
+  $("#detail-kind").textContent = `${text.kind} - OMP model context`;
+  $("#detail-title").textContent = text.title;
+  $("#detail-state").textContent = detailState(item);
+  detailContent.replaceChildren();
+
+	const modelMessages = Array.isArray(item.detail?.modelMessages)
+	  ? item.detail.modelMessages
+	  : [];
+	const roles = [...new Set(modelMessages.map((message) => message.modelRole).filter(Boolean))];
+	$("#detail-role").textContent = roles.join(" + ") || meta.label.toLowerCase();
+	const blockCount = modelMessages.reduce(
+	  (count, message) => count + (Array.isArray(message.blocks) ? message.blocks.length : 0),
+	  0,
+	);
+	if (blockCount === 0) {
+    const empty = document.createElement("p");
+    empty.id = "detail-empty";
+    empty.textContent = item.pending
+      ? "Not yet confirmed by an OMP context event."
+      : "No displayable content was exposed for this item.";
+    detailContent.appendChild(empty);
+	return;
+  }
+	let blockIndex = 0;
+	for (const message of modelMessages) {
+	  if (!Array.isArray(message.blocks)) continue;
+	  for (const block of message.blocks) {
+	    appendDetailBlock(item, block, blockIndex, message.modelRole);
+	    blockIndex += 1;
+	  }
+	}
+}
+
+function openDetail(node) {
+	if (!selectedStreamId) return;
+	detailSelection = { streamId: selectedStreamId, itemId: node.key };
+  hideTooltip();
+  syncDetailPanel();
+  document.body.dataset.detailOpen = "true";
+  detailPanel.setAttribute("aria-hidden", "false");
+  $("#detail-close").focus({ preventScroll: true });
+}
+
+function closeDetail() {
+	detailSelection = null;
+  document.body.dataset.detailOpen = "false";
+  detailPanel.setAttribute("aria-hidden", "true");
+	detailContent.replaceChildren();
+}
+
+detailBackdrop.addEventListener("click", closeDetail);
+$("#detail-close").addEventListener("click", closeDetail);
+addEventListener("keydown", (event) => {
+	if (event.key === "Escape" && detailSelection) closeDetail();
+});
 
 const touches = new Map();
 let pan = null;
@@ -965,10 +2288,11 @@ viewport.addEventListener("pointermove", (event) => {
     const [a, b] = [...touches.values()];
     const middle = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
     const distance = Math.hypot(a.x - b.x, a.y - b.y) || 1;
-    camera.scale = Math.min(2.4, Math.max(0.12, pinch.scale * distance / pinch.distance));
+	    camera.scale = Math.min(2.4, Math.max(MIN_CAMERA_SCALE, pinch.scale * distance / pinch.distance));
     camera.x = pinch.worldX - (middle.x - innerWidth / 2) / camera.scale;
     camera.y = pinch.worldY - (middle.y - innerHeight / 2) / camera.scale;
     cameraTarget = { ...camera };
+    markCameraDirty();
     return;
   }
   if (!pan) return;
@@ -979,6 +2303,7 @@ viewport.addEventListener("pointermove", (event) => {
     camera.x = pan.cameraX - deltaX / camera.scale;
     camera.y = pan.cameraY - deltaY / camera.scale;
     cameraTarget = { ...camera };
+    markCameraDirty();
   }
 });
 
@@ -1002,10 +2327,11 @@ viewport.addEventListener("wheel", (event) => {
   const factor = Math.exp(-event.deltaY * 0.0012);
   const worldX = camera.x + (event.clientX - innerWidth / 2) / camera.scale;
   const worldY = camera.y + (event.clientY - innerHeight / 2) / camera.scale;
-  camera.scale = Math.min(2.4, Math.max(0.12, camera.scale * factor));
+	  camera.scale = Math.min(2.4, Math.max(MIN_CAMERA_SCALE, camera.scale * factor));
   camera.x = worldX - (event.clientX - innerWidth / 2) / camera.scale;
   camera.y = worldY - (event.clientY - innerHeight / 2) / camera.scale;
   cameraTarget = { ...camera };
+  markCameraDirty();
 }, { passive: false });
 
 function updateChrome(payload) {
@@ -1028,19 +2354,18 @@ function updateChrome(payload) {
     : "? / ?";
 }
 
-function applyPayload(payload) {
+function applyPayload(payload, animateNew = false) {
   currentPayload = payload;
   updateChrome(payload);
 	const timeline = timelineFrom(payload);
 	$("#empty-state").classList.toggle("hidden", timeline.history.length > 0);
-	reconcileNodes(timeline);
+	reconcileNodes(timeline, animateNew);
+	if (detailSelection) syncDetailPanel();
 }
 
 function setMode(mode) {
   viewMode = mode;
-	document.body.dataset.mode = mode;
-  $("#window-mode").setAttribute("aria-pressed", String(mode === "window"));
-  $("#overview-mode").setAttribute("aria-pressed", String(mode === "overview"));
+  syncModeChrome();
   freeCamera = false;
   if (currentPayload) applyPayload(currentPayload);
 }
@@ -1048,9 +2373,23 @@ function setMode(mode) {
 $("#window-mode").addEventListener("click", () => setMode("window"));
 $("#overview-mode").addEventListener("click", () => setMode("overview"));
 $("#fit-view").addEventListener("click", () => fitView(true));
+followToggle.addEventListener("change", () => setFollowActive(followToggle.checked));
+sessionTabs.addEventListener("keydown", (event) => {
+  if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+  const tabs = [...sessionTabs.querySelectorAll(".session-tab")];
+  const index = tabs.findIndex((tab) => tab.dataset.streamId === selectedStreamId);
+  if (index < 0 || tabs.length < 2) return;
+  event.preventDefault();
+  const offset = event.key === "ArrowRight" ? 1 : -1;
+  const next = tabs[(index + offset + tabs.length) % tabs.length];
+  selectSession(next.dataset.streamId, true);
+  next.focus();
+});
 addEventListener("resize", () => {
+	syncGraphViewport();
   if (currentPayload) applyPayload(currentPayload);
   if (!freeCamera) fitView(false);
+  markCameraDirty();
 });
 
 function demoPayload() {
@@ -1062,6 +2401,20 @@ function demoPayload() {
 		firstSeenAt: Date.now() - (kinds.length - index) * 1000,
 		lastSeenAt: Date.now(),
 		...(kind === "tool" ? { toolName: index === 3 ? "read" : index === 7 ? "bash" : "search" } : {}),
+		detail: {
+			sourceRole: kind === "tool" ? "toolResult" : kind,
+			modelMessages: [{
+				modelRole: kind === "system" ? "system" : kind === "assistant" ? "assistant" : kind === "tool" ? "toolResult" : "user",
+				blocks: [{
+					type: "text",
+					text: kind === "system"
+						? "You are a helpful coding agent working inside the current project."
+						: kind === "tool"
+							? `Tool result ${index}: context-rail preview output.`
+							: `${kind} context item ${index}.`,
+				}],
+			}],
+		},
 	}));
 	const activeIds = ["system-prompt", "memory-18", ...history.slice(-4).map(itemKey)];
   return {
@@ -1081,43 +2434,147 @@ function demoPayload() {
 			...(toolName ? { toolName } : {}),
 		})),
     },
-		timeline: {
-			revision: 7,
-			history,
-			activeIds,
-			enteredIds: ["memory-18", ...history.slice(-4).map(itemKey)],
-			retainedIds: ["system-prompt"],
-			exitedIds: history.slice(1, 18).map(itemKey),
-			summaryEdges: history.slice(1, 18).map((item) => ({ from: item.id, to: "memory-18", kind: "summary" })),
-		},
+			timeline: {
+				revision: 7,
+				history,
+				activeIds,
+				enteredIds: ["memory-18", ...history.slice(-4).map(itemKey)],
+				retainedIds: ["system-prompt"],
+				exitedIds: history.slice(1, 18).map(itemKey),
+				observedIds: [],
+				confirmedIds: [],
+				pendingIds: [],
+				summaryEdges: history.slice(1, 18).map((item) => ({ from: item.id, to: "memory-18", kind: "summary" })),
+			},
   };
+}
+
+const EVENT_SOURCE_RECONNECT_DELAY_MS = 250;
+let eventSource = null;
+let eventReconnectTimer = null;
+
+function restartEventSourceAfterInvalidData(source) {
+	if (eventSource !== source) return;
+	source.close();
+	eventSource = null;
+	deltaTransfers.clear();
+	setConnection("offline", "invalid data");
+	if (eventReconnectTimer !== null) clearTimeout(eventReconnectTimer);
+	eventReconnectTimer = setTimeout(() => {
+		eventReconnectTimer = null;
+		connectEventSource();
+	}, EVENT_SOURCE_RECONNECT_DELAY_MS);
+}
+
+function handleEventSourceMessage(source, event, apply) {
+	if (eventSource !== source) return;
+	try {
+		apply(JSON.parse(event.data));
+		setConnection("live", "live");
+	} catch (_) {
+		restartEventSourceAfterInvalidData(source);
+	}
+}
+
+function applyLegacySnapshot(state) {
+	const timeline = timelineFrom(state);
+	applyHubPayload({
+		activeStreamId: "legacy:default",
+		sessions: [{
+			streamId: "legacy:default",
+			processId: "legacy",
+			processLabel: "OMP",
+			sessionId: "default",
+			sessionLabel: "Current session",
+			active: true,
+			connected: true,
+			phase: state.phase || "idle",
+			model: state.snapshot && state.snapshot.model,
+			activeItems: timeline.activeIds.length,
+			historyItems: timeline.history.length,
+			updatedAt: Date.now(),
+		}],
+		changed: { streamId: "legacy:default", state },
+	});
+}
+
+function connectEventSource() {
+	if (eventSource) return;
+	const eventsUrl = new URL("/events", location.href);
+	if (eventCapabilityToken) eventsUrl.searchParams.set("token", eventCapabilityToken);
+	const source = new EventSource(eventsUrl.href);
+	eventSource = source;
+	source.addEventListener("open", () => {
+		if (eventSource === source) setConnection("live", "live");
+	});
+	source.addEventListener("bootstrap", (event) => {
+		handleEventSourceMessage(source, event, applyHubPayload);
+	});
+	source.addEventListener("update", (event) => {
+		handleEventSourceMessage(source, event, applyHubPayload);
+	});
+	source.addEventListener("snapshot", (event) => {
+		handleEventSourceMessage(source, event, applyLegacySnapshot);
+	});
+	source.addEventListener("error", () => {
+		if (eventSource === source) setConnection("offline", "reconnecting");
+	});
 }
 
 const query = new URLSearchParams(location.search);
 if (query.get("demo") === "1") {
   setConnection("live", "demo");
-  applyPayload(demoPayload());
-} else {
-  const source = new EventSource("/events");
-  source.addEventListener("open", () => setConnection("live", "live"));
-  source.addEventListener("snapshot", (event) => {
-    try {
-      applyPayload(JSON.parse(event.data));
-      setConnection("live", "live");
-    } catch (_) {
-      setConnection("offline", "invalid data");
-    }
+  const primary = demoPayload();
+  const compacted = structuredClone(primary);
+  compacted.snapshot.model = "gpt-5.4";
+  compacted.snapshot.tokens = 118400;
+  compacted.snapshot.percent = 59.2;
+  compacted.phase = "tool";
+  compacted.activeTools = ["search"];
+  const idle = structuredClone(primary);
+  idle.snapshot.model = "claude-opus-4.1";
+  idle.snapshot.tokens = 42100;
+  idle.snapshot.percent = 21.05;
+  idle.phase = "idle";
+  const demoSessions = [
+    { streamId: "process-a:session-alpha", processId: "process-a", processLabel: "context-rail", sessionId: "session-alpha", sessionLabel: "Main build", active: true, connected: true, phase: primary.phase, model: primary.snapshot.model, activeItems: primary.timeline.activeIds.length, historyItems: primary.timeline.history.length, updatedAt: Date.now() },
+    { streamId: "process-b:session-beta", processId: "process-b", processLabel: "api-worker", sessionId: "session-beta", sessionLabel: "Hub protocol", active: true, connected: true, phase: compacted.phase, model: compacted.snapshot.model, activeItems: compacted.timeline.activeIds.length, historyItems: compacted.timeline.history.length, updatedAt: Date.now() - 1000 },
+    { streamId: "process-a:session-archive", processId: "process-a", processLabel: "context-rail", sessionId: "session-archive", sessionLabel: "Earlier session", active: false, connected: true, phase: idle.phase, model: idle.snapshot.model, activeItems: idle.timeline.activeIds.length, historyItems: idle.timeline.history.length, updatedAt: Date.now() - 2000 },
+  ];
+  applyHubPayload({
+    type: "bootstrap",
+    activeStreamId: demoSessions[0].streamId,
+    sessions: demoSessions,
+    states: [
+      { streamId: demoSessions[0].streamId, state: primary },
+      { streamId: demoSessions[1].streamId, state: compacted },
+      { streamId: demoSessions[2].streamId, state: idle },
+    ],
   });
-  source.addEventListener("error", () => setConnection("offline", "reconnecting"));
-}
+} else connectEventSource();
 
 globalThis.__contextRail = {
   diagnostics: () => ({
     connected: $("#connection").dataset.state,
     mode: viewMode,
+		selectedStreamId,
+		activeStreamId,
+		followActive,
+		pendingDeltaStreams: [...deltaTransfers.keys()],
+		sessions: sessionSummaries.map((summary) => ({ ...summary })),
 		historyIds: [...nodes.keys()],
 		activeIds: [...nodes.values()].filter((node) => node.item.active).map((node) => node.key),
-		inactiveIds: [...nodes.values()].filter((node) => !node.item.active).map((node) => node.key),
+		inactiveIds: [...nodes.values()].filter((node) => !node.item.active && !node.item.pending).map((node) => node.key),
+		pendingIds: [...nodes.values()].filter((node) => node.item.pending).map((node) => node.key),
+		detail: {
+			streamId: detailSelection?.streamId || null,
+			itemId: detailSelection?.itemId || null,
+			open: document.body.dataset.detailOpen === "true",
+			state: $("#detail-state").textContent,
+			role: $("#detail-role").textContent,
+			text: detailContent.textContent,
+		},
+		queuedIds: [...nodes.values()].filter((node) => !node.revealed).map((node) => node.key),
 		positions: Object.fromEntries([...nodes.values()].map((node) => [node.key, {
 			homeX: node.homeX,
 			homeY: node.homeY,
@@ -1127,12 +2584,46 @@ globalThis.__contextRail = {
 			targetY: node.targetY,
 		}])),
     edges: edges.size,
+			renderLoop: {
+				active: renderLoopActive,
+				scheduled: animationFrameId !== null,
+				driver: animationFrameId === null ? null : animationFrameUsesTimeout ? "timeout" : "raf",
+			movingNodes: movingNodes.size,
+			dirtyEdges: dirtyEdges.size,
+			frames: renderStats.frames,
+			lastFrameAt: renderStats.lastFrameAt,
+			lastFrame: {
+				nodeUpdates: renderStats.lastFrameNodeUpdates,
+				edgeUpdates: renderStats.lastFrameEdgeUpdates,
+			},
+			peakFrame: {
+				nodeUpdates: renderStats.peakFrameNodeUpdates,
+				edgeUpdates: renderStats.peakFrameEdgeUpdates,
+			},
+			totalUpdates: {
+				nodes: renderStats.totalNodeUpdates,
+				edges: renderStats.totalEdgeUpdates,
+			},
+			sleepingForMs: renderLoopActive || renderStats.sleepingSince === null
+				? 0
+				: Math.max(0, Math.round(performance.now() - renderStats.sleepingSince)),
+		},
     phase: document.body.dataset.phase,
     frame: { ...frameTarget },
   }),
 };
 
-requestAnimationFrame(renderFrame);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden && animationFrameId !== null && !animationFrameUsesTimeout) {
+    cancelAnimationFrame(animationFrameId);
+    animationFrameId = null;
+    scheduleRender();
+  } else if (!document.hidden && (movingNodes.size || dirtyEdges.size || cameraDirty || frameDirty)) {
+    scheduleRender();
+  }
+});
+
+scheduleRender();
 </script>
 </body>
 </html>
