@@ -4,6 +4,7 @@ import type { ContextTimelineSnapshot } from "./timeline.ts";
 const ITEM_LABELS: Record<ContextItemKind, string> = {
 	system: "SYS",
 	memory: "MEM",
+	developer: "DEV",
 	user: "USR",
 	assistant: "AST",
 	tool: "TOL",
