@@ -2,37 +2,58 @@
 
 See what your agent actually remembers. ContextRail is a read-only [Oh My Pi](https://github.com/can1357/oh-my-pi) extension that makes the agent's active context visible in the terminal and in a live local web viewer.
 
-The extension observes OMP's public lifecycle events, renders a compact terminal strip, and streams content-free snapshots to an interactive graph viewer without changing the messages sent to the model.
+The extension observes OMP's public lifecycle events, renders a compact terminal strip, and streams an explicit allowlist of model-context details to an interactive local graph viewer without changing the messages sent to the model.
 
 ## Current behavior
 
 - Shows total context usage in OMP's status area.
-- Classifies active context entries as system, memory, user, assistant, or tool.
+- Classifies active context entries as system, memory, developer, user, assistant, or tool.
 - Shows tool execution and compaction phases.
 - Provides `/context-rail` with `show`, `hide`, and `toggle` actions.
-- Starts a localhost-only HTML viewer with `/context-rail web`.
-- Keeps an append-only session history while each model call updates the active context set.
+- Starts or joins a localhost-only Hub and HTML viewer with `/context-rail web`.
+- Collects multiple OMP processes and sessions in one viewer.
+- Adds history nodes from OMP's finalized user, assistant, and tool-result events as they happen.
+- Uses each pre-call `context` event as the authoritative active-window track and confirms matching pending nodes in place.
+- Keeps an append-only history per live session while each model call updates its active context set.
+- Switches viewer tabs without switching, stopping, or mutating the OMP agent session.
 - Reconciles live graph nodes without rebuilding the canvas or resetting the camera.
-- Does not retain message content or write transcripts to disk.
+- Reveals nodes from the same live context burst in order, while hydration and tab changes stay immediate.
+- Coalesces queued state changes and transfers bounded deltas that the viewer applies atomically.
+- Marks sessions from crashed or disconnected OMP processes offline after their heartbeat expires while retaining history.
+- Stops the browser render loop after camera, frame, node, and edge animations settle.
+- Opens each card into an in-memory detail drawer with the content OMP exposed at the `context` hook.
+- Does not write message details or transcripts to disk.
 
 The first version treats each message as one visual block. It does not claim that block width is an exact per-message token measurement.
 
 ## Requirements
 
 - OMP 17.1.3 or newer
-- Node.js 22 or newer for development
+- Node.js 22.6.0 or newer for the shared web Hub and development
 
-## Try it locally
+## Install from GitHub
+
+```sh
+omp plugin install github:izumi0uu/context-rail
+omp plugin enable context-rail
+omp
+```
+
+Restart any OMP process that was already running so it loads the extension.
+
+## Link a source checkout
 
 ```sh
 npm install
 omp plugin link .
+omp plugin enable context-rail
 omp
 ```
 
-For a one-off run without linking the package:
+`npm install` also builds the `dist/` files used by the OMP plugin and Hub CLI. For a one-off source run without linking the package:
 
 ```sh
+npm install
 omp --extension ./src/index.ts
 ```
 
@@ -46,7 +67,22 @@ Inside OMP:
 /context-rail stop
 ```
 
-`web` prints the local viewer URL. `stop` closes its HTTP/SSE server. The compact terminal status remains visible while the expanded strip is hidden.
+`web` starts the shared Hub when needed and prints its local viewer URL. Use this command to obtain the viewer entry URL; the Hub daemon does not write its viewer capability to startup logs. Other linked OMP processes join that Hub when they next emit an event. `stop` disconnects only the current OMP process; it does not affect other agents. The compact terminal status remains visible while the expanded strip is hidden.
+
+The Hub runs independently from OMP so one agent process can exit without taking down the viewer. For a GitHub-installed plugin, stop the shared Hub with:
+
+```sh
+npm exec --yes --package=github:izumi0uu/context-rail -- context-rail stop
+```
+
+For a linked source checkout, run `npm run hub -- stop` from that checkout. Both commands wait until the old Hub has released its discovery file and lock, so starting it again immediately is safe.
+
+If OMP was launched from an environment that cannot find Node.js, ContextRail reports the resolved runtime and Hub CLI paths in the startup error. You can select Node explicitly before starting OMP:
+
+```sh
+export CONTEXT_RAIL_NODE=/absolute/path/to/node
+omp
+```
 
 ## Web viewer
 
@@ -54,6 +90,13 @@ The viewer keeps the full-screen camera, pan, zoom, floating-node, and SVG edge 
 
 - **Window** projects the items in the current model call into a compact frame; inactive history remains on the canvas.
 - **Overview** fits the complete session history and dims items outside the current model context.
+- Selecting a card opens its model role(s), context state, and allowlisted text, thinking, tool-call, or image blocks. One source card can show multiple model messages when OMP splits developer text from user image attachments.
+- Dashed pending nodes sit just outside the Window frame until a real OMP `context` event confirms that the model received them.
+- Session tabs are read-only. Selecting one changes only the displayed timeline.
+- **Follow active** tracks the most recently active session; turning it off pins the current tab.
+- Background sessions continue collecting events and show an activity marker without stealing focus.
+- The viewer URL carries a tab-scoped read capability in its fragment. The page removes that fragment from the visible address as soon as it loads and reuses the capability when the tab reloads.
+- Each session remembers its own camera and Window/Overview mode.
 - Dragging the canvas pans, scrolling zooms, and dragging a node temporarily pulls it out of the rail.
 - The usage rail, model, phase, tools, and compaction state update over Server-Sent Events.
 
@@ -68,19 +111,19 @@ Open the printed URL. The preview publishes generated snapshots over the real SS
 ## Architecture
 
 ```text
-OMP lifecycle events
-        |
-        v
-src/index.ts       read-only OMP adapter
-        +--> src/render.ts      terminal-safe status and detail lines
-        |
-        +--> src/server.ts      localhost HTTP + SSE
-                    |
-                    v
-              web/index.html   live history + active-window viewer
+OMP process A -----+
+OMP process B -----+--> local ContextRail Hub --> HTTP/SSE --> web/index.html
+OMP process C -----+          |
+                              +--> per-process/session read models
+
+src/index.ts          read-only OMP event/context adapter and per-session runtime
+src/hub-client.ts     authenticated, non-blocking Hub publisher
+src/hub-delta.ts      state diff, bounded transport chunks, and reconstruction
+src/hub-cli.ts        independent Hub lifecycle
+src/server.ts         localhost ingest API + SSE viewer server
 
 src/snapshot.ts    shared normalized context model
-src/timeline.ts    append-only history and active-set diffs
+src/timeline.ts    observed history, authoritative active set, and reconciliation diffs
 ```
 
 Keeping the snapshot model independent from OMP makes a future Pi adapter or web viewer possible without rewriting the UI model.
@@ -101,16 +144,25 @@ OMP is the runtime host rather than a package dependency. The extension uses a s
 ## Safety boundaries
 
 - The `context` handler returns nothing, so it cannot replace OMP's message list.
-- Full message text and tool output are not rendered, streamed, or persisted.
-- The viewer binds to a random `127.0.0.1` port and rejects cross-origin reads.
+- Card details reflect the agent-level messages observed at ContextRail's OMP `context` hook. Later extensions, OMP message conversion, provider serialization, tokenization, caching, or safety transforms can still change the final provider request.
+- The event track emits opaque, session-local node IDs plus an explicit allowlist of model-facing text, thinking, tool-call arguments, images, roles, and tool names; token-level `message_update` events are intentionally ignored.
+- Raw OMP message IDs, tool-call IDs, and timestamps are used only as in-process matching anchors and are never sent to the Hub.
+- Provider signatures, response IDs, usage records, diagnostics, and extension-private `details` fields are not sent to the Hub.
+- Message details live only in the OMP process, Hub memory, and the open browser page. The Hub retains disconnected session state for up to one hour unless it is stopped sooner.
+- The Hub binds to a random `127.0.0.1` port and rejects cross-origin reads.
+- Producer requests and the viewer event stream use separate random write and read capabilities stored in a user-private temporary discovery file.
+- The viewer URL contains only the read capability. It is not injected into the served HTML or Hub daemon logs, and cannot publish, heartbeat, or disconnect a producer. Anyone with this URL can read the in-memory card details while the Hub is running.
+- The Hub projects direct publishes and decoded deltas onto a strict allowlisted wire schema before retaining or streaming them.
 - The server sends no CORS headers and applies a restrictive Content Security Policy.
+- The viewer has no endpoint that can switch sessions, send prompts, abort work, or stop an OMP agent.
 - Streaming token events are deliberately excluded from the initial version to avoid repainting the TUI for every token.
 - Overall usage is reported by OMP. Per-message token accounting is not estimated yet.
 
 ## Roadmap
 
+- Add optional durable Hub history across machine restarts.
 - Mark pinned context with richer provenance.
-- Add throttled streaming state.
+- Add configurable in-memory history retention for very long-running sessions.
 - Add optional per-item token weights when OMP exposes reliable measurements.
 - Add a Pi adapter behind the existing snapshot interface.
 
