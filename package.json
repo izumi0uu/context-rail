@@ -13,6 +13,9 @@
   "bugs": {
     "url": "https://github.com/izumi0uu/context-rail/issues"
   },
+  "bin": {
+    "context-rail": "./dist/hub-cli.js"
+  },
   "files": [
     "dist",
     "src",
@@ -28,19 +31,21 @@
   },
   "omp": {
     "extensions": [
-      "./src/index.ts"
+      "./dist/index.js"
     ]
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "check": "npm run typecheck && npm test",
+    "hub": "node --experimental-strip-types src/hub-cli.ts",
+    "prepare": "npm run build",
     "preview": "node --experimental-strip-types src/preview.ts",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
-  "engines": {
-    "node": ">=22"
-  },
+	"engines": {
+		"node": ">=22.6.0"
+	},
   "devDependencies": {
     "@types/node": "^26.1.2",
     "typescript": "^6.0.3"
