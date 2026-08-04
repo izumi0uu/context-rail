@@ -3,5 +3,6 @@ dist/
 coverage/
 work/
 outputs/
+web/assets/
 *.log
 .DS_Store

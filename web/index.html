@@ -49,12 +49,23 @@
 
   #viewport.dragging { cursor: grabbing; }
 
+	#history-canvas {
+		position: absolute;
+		inset: 0;
+		z-index: 0;
+		display: block;
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+	}
+
   #world {
     position: absolute;
     top: 0;
     left: 0;
     width: 100px;
     height: 100px;
+		z-index: 1;
     transform-origin: 0 0;
   }
 
@@ -76,6 +87,8 @@
     opacity: 0.72;
 	transition: opacity 240ms ease;
   }
+
+  #window-frame[hidden] { display: none; }
 
   body[data-mode="overview"] #window-frame { opacity: 0; }
 
@@ -779,7 +792,7 @@
 <div id="viewport" aria-label="Context graph canvas">
   <div id="world">
     <svg id="edge-layer" width="100" height="100" aria-hidden="true">
-      <rect id="window-frame" x="0" y="0" width="0" height="0" rx="8"></rect>
+      <rect id="window-frame" x="0" y="0" width="0" height="0" rx="8" hidden></rect>
       <g id="edges"></g>
     </svg>
   </div>
@@ -807,7 +820,7 @@
 
 <nav id="sessionbar" aria-label="Observed sessions">
   <label id="follow-active">
-    <input id="follow-toggle" type="checkbox" aria-label="Follow active" checked>
+	    <input id="follow-toggle" type="checkbox" aria-label="Follow active">
     <span id="follow-track" aria-hidden="true"></span>
     <span id="follow-label">Follow active</span>
   </label>
@@ -852,6 +865,8 @@
   <div class="stat"><strong id="phase">idle</strong><span>phase</span></div>
 </footer>
 
+<script src="./assets/scene-core.js"></script>
+<script src="./assets/pixi-history.js"></script>
 <script>
 "use strict";
 
@@ -891,12 +906,19 @@ const sessionTabs = $("#session-tabs");
 const followToggle = $("#follow-toggle");
 const toolbar = $("#toolbar");
 const statusBar = $("#statusbar");
+const sceneEngine = globalThis.ContextRailCore;
+const historyEngine = globalThis.ContextRailPixi;
 const reducedMotionQuery = matchMedia("(prefers-reduced-motion: reduce)");
 let reducedMotion = reducedMotionQuery.matches;
 const MAX_STAGGER_TOTAL_MS = 280;
 const MAX_STAGGER_STEP_MS = 44;
 const MAX_ANIMATED_NODES = 120;
+const MAX_FALLBACK_HISTORY_NODES = 360;
+const FALLBACK_OVERSCAN_PX = 260;
 const MIN_CAMERA_SCALE = 0.004;
+const MAX_CAMERA_SCALE = 2.4;
+const MIN_VISIBLE_SCENE_PIXELS = 48;
+const WHEEL_ZOOM_SENSITIVITY = 0.0015;
 const MOBILE_BREAKPOINT = 720;
 const NODE_WIDTH_DESKTOP = 176;
 const NODE_WIDTH_MOBILE = 164;
@@ -923,11 +945,12 @@ const dirtyEdges = new Set();
 const sessionStates = new Map();
 const deltaTransfers = new Map();
 const sessionViews = new Map();
+const sessionLayouts = new Map();
 const unreadSessions = new Set();
 let sessionSummaries = [];
 let selectedStreamId = null;
 let activeStreamId = null;
-let followActive = true;
+let followActive = false;
 let currentPayload = null;
 let viewMode = "window";
 let freeCamera = false;
@@ -945,6 +968,23 @@ let frameDirty = true;
 let animationFrameId = null;
 let animationFrameUsesTimeout = false;
 let renderLoopActive = false;
+let currentSceneLayout = null;
+let cameraContentBounds = [];
+let activeCameraContentBounds = [];
+let viewedEpochIndex = null;
+let restoredSceneEpoch = null;
+let historyRenderer = null;
+let historyRendererAvailable = false;
+let historyRendererState = historyEngine ? "initializing" : "fallback";
+let historyRendererError = historyEngine ? null : "Pixi bundle unavailable";
+let fallbackRefreshTimer = null;
+let lastFallbackRefreshAt = 0;
+let historyRendererReconcileScheduled = false;
+let lastReconciledTimeline = null;
+let lastReconciledMode = null;
+let lastReconciledRendererState = null;
+let lastReconciledDimensions = null;
+const historyHandoffIds = new Set();
 const renderStats = {
   frames: 0,
   totalNodeUpdates: 0,
@@ -956,6 +996,92 @@ const renderStats = {
   lastFrameAt: null,
   sleepingSince: null,
 };
+
+function syncHistoryRendererDataset() {
+	document.body.dataset.renderer = historyRendererAvailable ? "pixi" : "dom";
+	if (historyRendererError) document.body.dataset.rendererError = historyRendererError;
+	else delete document.body.dataset.rendererError;
+}
+
+function scheduleHistoryRendererReconcile() {
+	if (historyRendererReconcileScheduled || !currentPayload) return;
+	historyRendererReconcileScheduled = true;
+	queueMicrotask(() => {
+		historyRendererReconcileScheduled = false;
+		if (currentPayload) applyPayload(currentPayload, false, true);
+	});
+}
+
+function enterHistoryRendererFallback(error, destroy = false) {
+	const failedRenderer = historyRenderer;
+	historyRendererAvailable = false;
+	historyRendererState = "fallback";
+	historyRendererError = error instanceof Error ? error.message : String(error);
+	historyHandoffIds.clear();
+	if (destroy) {
+		historyRenderer = null;
+		try { failedRenderer?.destroy(); } catch (_) {}
+	}
+	syncHistoryRendererDataset();
+	scheduleHistoryRendererReconcile();
+}
+
+function activateHistoryRenderer() {
+	if (!historyRenderer) return;
+	historyRendererAvailable = true;
+	historyRendererState = "pixi";
+	historyRendererError = null;
+	syncHistoryRendererDataset();
+	scheduleHistoryRendererReconcile();
+	markCameraDirty();
+}
+
+function useHistoryRenderer(operation) {
+	if (!historyRendererAvailable || !historyRenderer) return false;
+	try {
+		operation(historyRenderer);
+		return true;
+	} catch (error) {
+		enterHistoryRendererFallback(error, true);
+		return false;
+	}
+}
+
+function readHistoryRenderer(operation, fallback = null) {
+	if (!historyRendererAvailable || !historyRenderer) return fallback;
+	try {
+		return operation(historyRenderer);
+	} catch (error) {
+		enterHistoryRendererFallback(error, true);
+		return fallback;
+	}
+}
+
+if (historyEngine?.createHistoryRenderer) {
+	historyEngine.createHistoryRenderer(viewport, {
+		onContextLost() {
+			enterHistoryRendererFallback("WebGL context lost");
+		},
+		onContextRestored() {
+			activateHistoryRenderer();
+		},
+		onError(error) {
+			enterHistoryRendererFallback(error, true);
+		},
+	}).then((renderer) => {
+		historyRenderer = renderer;
+		try {
+			if (renderer.diagnostics().contextLost) enterHistoryRendererFallback("WebGL context lost");
+			else activateHistoryRenderer();
+		} catch (error) {
+			enterHistoryRendererFallback(error, true);
+		}
+	}).catch((error) => {
+		enterHistoryRendererFallback(error, true);
+	});
+} else {
+	syncHistoryRendererDataset();
+}
 
 function differs(left, right, epsilon) {
   return Math.abs(left - right) > epsilon;
@@ -970,6 +1096,7 @@ function approach(current, target, ease, epsilon) {
 function scheduleRender() {
   if (animationFrameId !== null) return;
   renderLoopActive = true;
+  document.body.dataset.renderLoop = "active";
   renderStats.sleepingSince = null;
   animationFrameUsesTimeout = document.hidden;
   animationFrameId = animationFrameUsesTimeout
@@ -1049,7 +1176,10 @@ function graphViewport() {
 const graphChromeResizeObserver = typeof ResizeObserver === "function"
 	? new ResizeObserver(() => {
 		if (!syncGraphViewport()) return;
-		if (!freeCamera) fitView(false);
+		if (freeCamera) {
+			camera = constrainCamera(camera, true);
+			cameraTarget = constrainCamera(cameraTarget, true);
+		} else fitView(false);
 		markCameraDirty();
 	})
 	: null;
@@ -1107,6 +1237,10 @@ function timelineFrom(payload) {
 function clearGraph() {
   hideTooltip();
   closeDetail();
+	windowFrame.toggleAttribute("hidden", true);
+	if (fallbackRefreshTimer !== null) clearTimeout(fallbackRefreshTimer);
+	fallbackRefreshTimer = null;
+	lastFallbackRefreshAt = 0;
   for (const node of nodes.values()) {
     if (node.removeTimer) clearTimeout(node.removeTimer);
     node.element.remove();
@@ -1115,8 +1249,19 @@ function clearGraph() {
   movingNodes.clear();
   for (const edge of edges.values()) edge.path.remove();
   edges.clear();
-  dirtyEdges.clear();
+	dirtyEdges.clear();
+	currentSceneLayout = null;
+	cameraContentBounds = [];
+	activeCameraContentBounds = [];
+	viewedEpochIndex = null;
+	restoredSceneEpoch = null;
+	historyHandoffIds.clear();
+	useHistoryRenderer((renderer) => renderer.setScene({ nodes: [], edges: [] }));
   lastAnimatedRevision = -1;
+	lastReconciledTimeline = null;
+	lastReconciledMode = null;
+	lastReconciledRendererState = null;
+	lastReconciledDimensions = null;
 }
 
 function syncModeChrome() {
@@ -1130,6 +1275,8 @@ function saveSessionView() {
   sessionViews.set(selectedStreamId, {
     mode: viewMode,
     freeCamera,
+	viewedEpochIndex,
+	sceneEpoch: currentSceneLayout?.currentEpoch ?? null,
     camera: { ...camera },
     cameraTarget: { ...cameraTarget },
   });
@@ -1139,6 +1286,8 @@ function restoreSessionView(streamId) {
   const saved = sessionViews.get(streamId);
   viewMode = saved ? saved.mode : "window";
   freeCamera = saved ? saved.freeCamera : false;
+  viewedEpochIndex = saved?.viewedEpochIndex ?? null;
+	restoredSceneEpoch = saved?.sceneEpoch ?? null;
   camera = saved ? { ...saved.camera } : { x: 500, y: 420, scale: 0.8 };
   cameraTarget = saved ? { ...saved.cameraTarget } : { ...camera };
   markCameraDirty();
@@ -1339,8 +1488,9 @@ function applyHubPayload(payload) {
 		? document.activeElement.dataset.streamId
 		: null;
 	const knownStreamIds = new Set([
-		...sessionStates.keys(),
-		...sessionViews.keys(),
+			...sessionStates.keys(),
+			...sessionViews.keys(),
+			...sessionLayouts.keys(),
 		...unreadSessions,
 		...deltaTransfers.keys(),
 	]);
@@ -1368,8 +1518,9 @@ function applyHubPayload(payload) {
 		for (const streamId of sessionStates.keys()) knownStreamIds.add(streamId);
 		for (const streamId of knownStreamIds) {
 			if (available.has(streamId)) continue;
-			sessionStates.delete(streamId);
-			sessionViews.delete(streamId);
+				sessionStates.delete(streamId);
+				sessionViews.delete(streamId);
+				sessionLayouts.delete(streamId);
 			unreadSessions.delete(streamId);
 			deltaTransfers.delete(streamId);
 		}
@@ -1420,7 +1571,7 @@ function nodeDimensions() {
 		  };
 }
 
-function createNode(item, index, target, dimensions, revealAt = 0) {
+function createNode(item, index, target, dimensions, revealAt = 0, start = null) {
 	  const element = document.createElement("div");
 	  element.className = "node";
 
@@ -1435,8 +1586,8 @@ function createNode(item, index, target, dimensions, revealAt = 0) {
   const revealed = revealAt === 0;
   const node = {
     key: itemKey(item), item, index, element, kind, title, detail,
-    x: target.x + (viewMode === "window" ? 180 : 0),
-    y: target.y + 20,
+    x: start?.x ?? target.x + (viewMode === "window" ? 180 : 0),
+    y: start?.y ?? target.y + 20,
     targetX: target.x,
     targetY: target.y,
     homeX: target.homeX,
@@ -1445,7 +1596,7 @@ function createNode(item, index, target, dimensions, revealAt = 0) {
     focusY: target.focusY,
 	    width: dimensions.width,
 	    height: dimensions.height,
-    opacity: 0,
+    opacity: start?.opacity ?? 0,
     targetOpacity: revealed ? 1 : 0,
     revealOpacity: 1,
     revealAt,
@@ -1456,6 +1607,7 @@ function createNode(item, index, target, dimensions, revealAt = 0) {
     dragging: false,
     edgeKeys: new Set(),
     removeTimer: null,
+		handoffToHistory: false,
   };
 
   if (!revealed) {
@@ -1499,112 +1651,132 @@ function updateNodeContent(node, item, index) {
   node.detail.textContent = text.detail;
 }
 
-function homePosition(index) {
-		  if (isShortLandscapeLayout()) {
-			  const columns = 5;
-			  const row = Math.floor(index / columns);
-			  const offset = index % columns;
-			  const column = row % 2 === 0 ? offset : columns - 1 - offset;
-			  return { x: 210 + column * 190, y: 230 + row * 96 };
-		  }
-		  const mobile = isMobileLayout();
-  const columns = mobile ? 2 : 6;
-  const row = Math.floor(index / columns);
-  const offset = index % columns;
-  const column = row % 2 === 0 ? offset : columns - 1 - offset;
-  return {
-    x: (mobile ? 245 : 250) + column * (mobile ? 210 : 228),
-    y: 720 + row * (mobile ? 146 : 158),
-  };
+function buildLayout(timeline, dimensions) {
+		if (!sceneEngine?.buildSceneLayout) throw new Error("ContextRail scene layout is unavailable");
+		const dimensionsKey = `${dimensions.width}:${dimensions.height}:${isShortLandscapeLayout()}:${isMobileLayout()}`;
+		const cached = selectedStreamId ? sessionLayouts.get(selectedStreamId) : null;
+		if (cached?.timeline === timeline && cached.dimensionsKey === dimensionsKey) return cached.layout;
+		const layout = sceneEngine.buildSceneLayout(timeline, {
+			nodeWidth: dimensions.width,
+			nodeHeight: dimensions.height,
+			compact: isShortLandscapeLayout(),
+			mobile: isMobileLayout(),
+		}, cached?.layout);
+		if (selectedStreamId) sessionLayouts.set(selectedStreamId, { timeline, dimensionsKey, layout });
+		return layout;
+	}
+
+function nodeLayout(placement, active, pending) {
+	const target = viewMode === "window"
+		? active
+			? placement.focus
+			: pending
+				? placement.pending
+				: placement.historyFocus
+		: placement.home;
+	return {
+		x: target.x,
+		y: target.y,
+		homeX: placement.home.x,
+		homeY: placement.home.y,
+		focusX: placement.focus.x,
+		focusY: placement.focus.y,
+		pendingX: placement.pending.x,
+		pendingY: placement.pending.y,
+	};
 }
 
-function focusPosition(item, index, count, visibleCount = count) {
-  const meta = kindMeta[item.kind] || kindMeta.unknown;
-		  const compactColumns = shortLandscapeColumns(innerWidth, innerHeight, visibleCount);
-		  if (compactColumns > 0) {
-			  const row = Math.floor(index / compactColumns);
-			  const offset = index % compactColumns;
-			  const column = row % 2 === 0 ? offset : compactColumns - 1 - offset;
-			  return {
-				  x: 210 + column * 190,
-				  y: 230 + row * 96 + meta.lane * 0.04,
-			  };
-		  }
-		  if (isMobileLayout()) {
-    const columns = count > 6 ? 2 : 1;
-    const row = Math.floor(index / columns);
-    const column = index % columns;
-    return {
-      x: columns === 1 ? 360 : 250 + column * 210,
-      y: 245 + row * 132 + meta.lane * 0.06,
-    };
-  }
-	const columns = Math.min(7, Math.max(1, count));
-	const row = Math.floor(index / columns);
-	const offset = index % columns;
-	const column = row % 2 === 0 ? offset : columns - 1 - offset;
-  return {
-    x: 250 + column * 224,
-    y: 285 + row * 146 + meta.lane * 0.35 + Math.sin(index * 1.4) * 8,
-  };
+function rebuildCameraContentBounds(layout, activeIds, pendingIds, dimensions) {
+	const prioritized = [[], [], []];
+	for (const placement of layout.placements.values()) {
+		const active = activeIds.has(placement.id);
+		const pending = pendingIds.has(placement.id);
+		const point = viewMode === "overview"
+			? placement.home
+			: active
+				? placement.focus
+				: pending
+					? placement.pending
+					: placement.historyFocus;
+		prioritized[active ? 0 : pending ? 1 : 2].push({
+			x: point.x - dimensions.width / 2,
+			y: point.y - dimensions.height / 2,
+			width: dimensions.width,
+			height: dimensions.height,
+		});
+	}
+	cameraContentBounds = prioritized.flat();
+	const focusContentBounds = [...prioritized[0], ...prioritized[1]];
+	activeCameraContentBounds = focusContentBounds.length ? focusContentBounds : cameraContentBounds;
 }
 
-function pendingPosition(item, index, count, activeCount) {
-  const meta = kindMeta[item.kind] || kindMeta.unknown;
-		  const compactColumns = shortLandscapeColumns(innerWidth, innerHeight, activeCount + count);
-		  if (compactColumns > 0) {
-			  const absoluteIndex = activeCount + index;
-			  const row = Math.floor(absoluteIndex / compactColumns);
-			  const offset = absoluteIndex % compactColumns;
-			  const column = row % 2 === 0 ? offset : compactColumns - 1 - offset;
-			  return {
-				  x: 210 + column * 190,
-				  y: 230 + row * 96 + meta.lane * 0.04,
-			  };
-		  }
-		  if (isMobileLayout()) {
-    const activeColumns = activeCount > 6 ? 2 : 1;
-    const activeRows = Math.max(1, Math.ceil(activeCount / activeColumns));
-    const columns = count > 4 ? 2 : 1;
-    return {
-      x: columns === 1 ? 360 : 250 + (index % columns) * 210,
-      y: 245 + activeRows * 132 + 92 + Math.floor(index / columns) * 132 + meta.lane * 0.04,
-    };
-  }
-  const activeColumns = Math.min(7, Math.max(1, activeCount));
-  const activeRows = Math.max(1, Math.ceil(activeCount / activeColumns));
-  const columns = Math.min(5, Math.max(1, count));
-  return {
-    x: 250 + (index % columns) * 224,
-    y: 285 + activeRows * 146 + 82 + Math.floor(index / columns) * 138 + meta.lane * 0.16,
-  };
+function historyVisualOpacity() {
+	return viewMode === "overview" ? 0.54 : 0.44;
 }
 
-function nodeLayout(item, historyIndex, activeIndex, activeCount, pendingIndex, pendingCount) {
-  const home = homePosition(historyIndex);
-	  const focus = activeIndex >= 0
-		? focusPosition(item, activeIndex, activeCount, activeCount + pendingCount)
-		: home;
-  const pending = pendingIndex >= 0
-    ? pendingPosition(item, pendingIndex, pendingCount, activeCount)
-    : home;
-  const target = viewMode === "window"
-    ? activeIndex >= 0
-      ? focus
-      : pendingIndex >= 0
-        ? pending
-        : home
-    : home;
-  return {
-    x: target.x,
-    y: target.y,
-    homeX: home.x,
-    homeY: home.y,
-    focusX: focus.x,
-    focusY: focus.y,
-    pendingX: pending.x,
-    pendingY: pending.y,
-  };
+function fallbackDomIds(items, activeIds, pendingIds) {
+	const wanted = new Set([...activeIds, ...pendingIds]);
+	if (!currentSceneLayout) return wanted;
+	const viewportBounds = graphViewport();
+	const scale = Math.max(camera.scale, MIN_CAMERA_SCALE);
+	const halfWidth = (innerWidth / 2 + FALLBACK_OVERSCAN_PX) / scale;
+	const halfHeight = (viewportBounds.height / 2 + FALLBACK_OVERSCAN_PX) / scale;
+	const visibleBounds = {
+		left: camera.x - halfWidth,
+		right: camera.x + halfWidth,
+		top: camera.y - halfHeight,
+		bottom: camera.y + halfHeight,
+	};
+	const dimensions = nodeDimensions();
+	const candidates = [];
+	for (const item of items) {
+		const key = itemKey(item);
+		if (wanted.has(key)) continue;
+		const placement = currentSceneLayout.placements.get(key);
+		if (!placement) continue;
+		const point = viewMode === "overview" ? placement.home : placement.historyFocus;
+		if (
+			point.x + dimensions.width / 2 < visibleBounds.left
+			|| point.x - dimensions.width / 2 > visibleBounds.right
+			|| point.y + dimensions.height / 2 < visibleBounds.top
+			|| point.y - dimensions.height / 2 > visibleBounds.bottom
+		) continue;
+		candidates.push({
+			key,
+			distance: Math.hypot(point.x - camera.x, point.y - camera.y),
+		});
+	}
+	if (candidates.length <= MAX_FALLBACK_HISTORY_NODES) {
+		for (const { key } of candidates) wanted.add(key);
+		return wanted;
+	}
+	if (camera.scale < 0.16) {
+		for (let index = 0; index < MAX_FALLBACK_HISTORY_NODES; index += 1) {
+			const sampled = Math.floor(index * (candidates.length - 1) / (MAX_FALLBACK_HISTORY_NODES - 1));
+			wanted.add(candidates[sampled].key);
+		}
+	} else {
+		candidates.sort((left, right) => left.distance - right.distance);
+		for (const { key } of candidates.slice(0, MAX_FALLBACK_HISTORY_NODES)) wanted.add(key);
+	}
+	return wanted;
+}
+
+function scheduleFallbackRefresh() {
+	if (historyRendererState === "pixi" || !currentPayload) return;
+	const refresh = () => {
+		fallbackRefreshTimer = null;
+		if (historyRendererState === "pixi" || !currentPayload) return;
+		lastFallbackRefreshAt = performance.now();
+		reconcileNodes(timelineFrom(currentPayload), false);
+	};
+	const remaining = 80 - (performance.now() - lastFallbackRefreshAt);
+	if (remaining <= 0) {
+		if (fallbackRefreshTimer !== null) clearTimeout(fallbackRefreshTimer);
+		refresh();
+		return;
+	}
+	if (fallbackRefreshTimer === null) fallbackRefreshTimer = setTimeout(refresh, remaining);
 }
 
 function flashDiff(node, diff) {
@@ -1633,21 +1805,182 @@ function staggerStep(itemCount) {
   return itemCount > 1 ? Math.min(MAX_STAGGER_STEP_MS, MAX_STAGGER_TOTAL_MS / (itemCount - 1)) : 0;
 }
 
+function numericColor(color) {
+	return Number.parseInt(String(color).replace("#", ""), 16);
+}
+
+function displayPoint(key, activeIds, pendingIds) {
+	const placement = currentSceneLayout?.placements.get(key);
+	if (!placement) return { x: 0, y: 0 };
+	const node = nodes.get(key);
+	if (
+		node?.renderX !== undefined
+		&& (activeIds.has(key) || pendingIds.has(key))
+	) {
+		return { x: node.renderX, y: node.renderY };
+	}
+	if (viewMode === "overview") return placement.home;
+	if (activeIds.has(key)) return placement.focus;
+	if (pendingIds.has(key)) return placement.pending;
+	return placement.historyFocus;
+}
+
+function syncHistoryScene(timeline, items, activeIds, pendingIds) {
+	if (!historyRendererAvailable || !historyRenderer || !currentSceneLayout) return;
+	const dynamicIds = new Set([...activeIds, ...pendingIds, ...historyHandoffIds]);
+	const summaryTargets = new Set((timeline.summaryEdges || []).map((edge) => String(edge.to)));
+	const visuals = items.map((item, index) => {
+		const key = itemKey(item);
+		const point = displayPoint(key, activeIds, pendingIds);
+		const meta = kindMeta[item.kind] || kindMeta.unknown;
+		const displayItem = {
+			...item,
+			active: activeIds.has(key),
+			pending: pendingIds.has(key),
+			summary: Boolean(item.synthetic) || summaryTargets.has(key),
+		};
+		const text = nodeText(displayItem, index);
+		return {
+			id: key,
+			kind: text.kind,
+			title: text.title,
+			detail: text.detail,
+			x: point.x,
+			y: point.y,
+			width: nodeDimensions().width,
+			height: nodeDimensions().height,
+			color: numericColor(meta.color),
+			opacity: viewMode === "overview" ? (activeIds.has(key) ? 1 : 0.54) : 0.44,
+			summary: displayItem.summary,
+			drawCard: !activeIds.has(key) && !pendingIds.has(key) && !historyHandoffIds.has(key),
+		};
+	});
+	const visualById = new Map(visuals.map((visual) => [visual.id, visual]));
+	const edgeVisuals = [];
+	const keys = items.map(itemKey);
+	for (let index = 1; index < keys.length; index += 1) {
+		const from = keys[index - 1];
+		const to = keys[index];
+		const dynamic = dynamicIds.has(from) || dynamicIds.has(to);
+		edgeVisuals.push({
+			from,
+			to,
+			type: "sequence",
+			dynamic,
+			opacity: dynamic ? 0.62 : viewMode === "overview" ? 0.28 : 0.11,
+		});
+	}
+	const summaryGroups = new Map();
+	for (const edge of timeline.summaryEdges || []) {
+		const target = String(edge.to);
+		const group = summaryGroups.get(target) || [];
+		group.push(String(edge.from));
+		summaryGroups.set(target, group);
+	}
+	for (const [target, sources] of summaryGroups) {
+		if (sources.length <= 96) {
+			for (const source of sources) {
+				edgeVisuals.push({
+					from: source,
+					to: target,
+					type: "summary",
+					dynamic: dynamicIds.has(source) || dynamicIds.has(target),
+					opacity: activeIds.has(target) ? 0.5 : 0.25,
+				});
+			}
+			continue;
+		}
+		const sourceVisuals = sources.map((id) => visualById.get(id)).filter(Boolean);
+		if (!sourceVisuals.length || !visualById.has(target)) continue;
+		const bundleId = `summary-bundle:${target}`;
+		visuals.push({
+			id: bundleId,
+			kind: "summary bundle",
+			title: "",
+			detail: "",
+			x: sourceVisuals.reduce((sum, visual) => sum + visual.x, 0) / sourceVisuals.length,
+			y: sourceVisuals.reduce((sum, visual) => sum + visual.y, 0) / sourceVisuals.length,
+			width: 0,
+			height: 0,
+			color: numericColor(kindMeta.memory.color),
+			opacity: 0,
+			drawCard: false,
+		});
+		edgeVisuals.push({
+			from: bundleId,
+			to: target,
+			type: "bundle",
+			dynamic: dynamicIds.has(target),
+			opacity: 0.46,
+		});
+	}
+	useHistoryRenderer((renderer) => {
+		renderer.setScene(
+			{ nodes: visuals, edges: edgeVisuals },
+			{ animate: !reducedMotion, duration: 260 },
+		);
+		const handoffOffsets = {};
+		for (const key of historyHandoffIds) {
+			const node = nodes.get(key);
+			const visual = visualById.get(key);
+			if (!node || !visual) continue;
+			const renderX = node.renderX ?? node.x;
+			const renderY = node.renderY ?? node.y;
+			handoffOffsets[key] = { x: renderX - visual.x, y: renderY - visual.y };
+		}
+		renderer.setOffsets(handoffOffsets);
+	});
+}
+
 function reconcileNodes(timeline, animateNew = false) {
-	  const items = timeline.history || [];
-	  const dimensions = nodeDimensions();
-  const activeOrder = new Map((timeline.activeIds || []).map((id, index) => [String(id), index]));
-  const activeIds = new Set(activeOrder.keys());
+	const items = timeline.history || [];
+	const previousSceneEpoch = currentSceneLayout?.currentEpoch ?? restoredSceneEpoch;
+	const dimensions = nodeDimensions();
+	const activeOrder = new Map((timeline.activeIds || []).map((id, index) => [String(id), index]));
+	const activeIds = new Set(activeOrder.keys());
 	const pendingKeys = (timeline.pendingIds || items.filter((item) => item.pending).map(itemKey)).map(String);
 	const pendingOrder = new Map(pendingKeys.map((id, index) => [id, index]));
+	const pendingIds = new Set(pendingOrder.keys());
+	const pixiStartPoints = new Map();
+	if (historyRendererAvailable && historyRenderer) {
+		for (const key of [...activeIds, ...pendingIds]) {
+			if (nodes.has(key)) continue;
+			const point = readHistoryRenderer((renderer) => renderer.getNodePosition(key));
+			if (point) pixiStartPoints.set(key, point);
+		}
+	}
+	currentSceneLayout = buildLayout(timeline, dimensions);
+	rebuildCameraContentBounds(currentSceneLayout, activeIds, pendingIds, dimensions);
+	restoredSceneEpoch = null;
+	if (viewedEpochIndex !== null) {
+		viewedEpochIndex = Math.min(viewedEpochIndex, currentSceneLayout.currentEpoch);
+	}
 	const summaryTargets = new Set((timeline.summaryEdges || []).map((edge) => String(edge.to)));
   const enteredIds = new Set((timeline.enteredIds || []).map(String));
   const exitedIds = new Set((timeline.exitedIds || []).map(String));
-	  const animateDiff = timeline.revision !== lastAnimatedRevision;
-	  const newKeys = items.map(itemKey).filter((key) => !nodes.has(key));
-	  const animateCreated = animateNew && animateDiff && !reducedMotion && newKeys.length <= MAX_ANIMATED_NODES;
-	  let diffAnimationBudget = animateDiff && !reducedMotion ? MAX_ANIMATED_NODES : 0;
-	  const step = animateCreated ? staggerStep(newKeys.length) : 0;
+	const animateDiff = timeline.revision !== lastAnimatedRevision;
+	const renderHistoryInDom = historyRendererState !== "pixi";
+	if (!historyRendererAvailable) historyHandoffIds.clear();
+	for (const key of [...activeIds, ...pendingIds]) historyHandoffIds.delete(key);
+	if (historyRendererAvailable) {
+		for (const [key, node] of nodes) {
+			if ((node.item.active || node.item.pending) && !activeIds.has(key) && !pendingIds.has(key)) {
+				historyHandoffIds.add(key);
+			}
+		}
+	}
+	const itemIds = new Set(items.map(itemKey));
+	for (const key of [...historyHandoffIds]) {
+		if (!itemIds.has(key)) historyHandoffIds.delete(key);
+	}
+	const domWanted = renderHistoryInDom
+		? fallbackDomIds(items, activeIds, pendingIds)
+		: new Set([...activeIds, ...pendingIds, ...historyHandoffIds]);
+	document.body.dataset.domNodeCount = String(domWanted.size);
+	const newKeys = [...domWanted].filter((key) => !nodes.has(key));
+	const animateCreated = animateNew && animateDiff && !reducedMotion && newKeys.length <= MAX_ANIMATED_NODES;
+	let diffAnimationBudget = animateDiff && !reducedMotion ? MAX_ANIMATED_NODES : 0;
+	const step = animateCreated ? staggerStep(newKeys.length) : 0;
   const now = performance.now();
   const revealTimes = new Map(
     step > 0 ? newKeys.slice(1).map((key, index) => [key, now + (index + 1) * step]) : [],
@@ -1658,29 +1991,29 @@ function reconcileNodes(timeline, animateNew = false) {
     world.dataset.lastStaggerStep = String(Math.round(step));
     world.dataset.lastStaggerDuration = String(Math.round(step * (newKeys.length - 1)));
 	  }
-	  const wanted = new Set();
-	  const newNodeFragment = document.createDocumentFragment();
-	  let createdNodes = 0;
-	  items.forEach((item, index) => {
+	const newNodeFragment = document.createDocumentFragment();
+	let createdNodes = 0;
+	items.forEach((item, index) => {
     const key = itemKey(item);
-    wanted.add(key);
-	const activeIndex = activeOrder.get(key) ?? -1;
 	const active = activeIds.has(key);
-	const pendingIndex = pendingOrder.get(key) ?? -1;
-	const pending = pendingIndex >= 0;
+	const pending = pendingIds.has(key);
 	const displayItem = { ...item, active, pending, summary: Boolean(item.synthetic) || summaryTargets.has(key) };
-	const target = nodeLayout(
-		displayItem,
-		index,
-		activeIndex,
-		activeOrder.size,
-		pendingIndex,
-		pendingOrder.size,
-	);
+	const placement = currentSceneLayout.placements.get(key);
+	if (!placement) return;
+	const target = nodeLayout(placement, active, pending);
+	if (!domWanted.has(key)) return;
     let node = nodes.get(key);
     const created = !node;
 	    if (!node) {
-			node = createNode(displayItem, index, target, dimensions, revealTimes.get(key) || 0);
+			const pixiStart = pixiStartPoints.get(key);
+			node = createNode(
+				displayItem,
+				index,
+				target,
+				dimensions,
+				revealTimes.get(key) || 0,
+				pixiStart ? { ...pixiStart, opacity: historyVisualOpacity() } : null,
+			);
 	      nodes.set(key, node);
 	      newNodeFragment.appendChild(node.element);
 	      createdNodes += 1;
@@ -1704,6 +2037,7 @@ function reconcileNodes(timeline, animateNew = false) {
 	node.focusY = target.focusY;
 		node.pendingX = target.pendingX;
 		node.pendingY = target.pendingY;
+		node.handoffToHistory = historyHandoffIds.has(key);
 		if (node.width !== dimensions.width || node.height !== dimensions.height) {
 			node.width = dimensions.width;
 			node.height = dimensions.height;
@@ -1711,9 +2045,15 @@ function reconcileNodes(timeline, animateNew = false) {
 		}
     node.targetX = target.x;
     node.targetY = target.y;
-		node.revealOpacity = active ? 1 : pending ? (viewMode === "overview" ? 0.62 : 0.82) : viewMode === "overview" ? 0.38 : 0.2;
+		node.revealOpacity = active
+			? 1
+			: pending
+				? (viewMode === "overview" ? 0.62 : 0.82)
+				: node.handoffToHistory
+					? historyVisualOpacity()
+					: viewMode === "overview" ? 0.38 : 0.2;
 		if (node.revealed) node.targetOpacity = node.revealOpacity;
-		if (created && !animateCreated) {
+		if (created && !animateCreated && !pixiStartPoints.has(key)) {
 			node.x = node.targetX;
 			node.y = node.targetY;
 			node.opacity = node.targetOpacity;
@@ -1731,17 +2071,32 @@ function reconcileNodes(timeline, animateNew = false) {
       || differs(node.y, node.targetY, POSITION_EPSILON)
       || differs(node.opacity, node.targetOpacity, OPACITY_EPSILON)
     ) markNodeMoving(node);
-	  });
-	  if (createdNodes > 0) world.appendChild(newNodeFragment);
+	});
+	if (createdNodes > 0) world.appendChild(newNodeFragment);
 
-  for (const [key, node] of nodes) {
-    if (wanted.has(key) || node.removeTimer) continue;
+	for (const [key, node] of nodes) {
+		if (domWanted.has(key)) continue;
+		if (historyRendererAvailable) {
+			if (node.removeTimer) clearTimeout(node.removeTimer);
+			movingNodes.delete(node);
+			node.element.remove();
+			nodes.delete(key);
+			continue;
+		}
+		if (node.removeTimer) continue;
+	const placement = currentSceneLayout.placements.get(key);
     node.revealed = true;
     node.revealAt = 0;
     node.pendingDiff = null;
-    node.targetOpacity = 0;
-    node.targetX -= 170;
-    node.targetY += 34;
+	node.targetOpacity = 0;
+	if (placement) {
+		const exitTarget = viewMode === "window" ? placement.historyFocus : placement.home;
+		node.targetX = exitTarget.x;
+		node.targetY = exitTarget.y;
+	} else {
+		node.targetX -= 170;
+		node.targetY += 34;
+	}
     node.element.setAttribute("aria-hidden", "true");
     markNodeMoving(node);
     node.removeTimer = setTimeout(() => {
@@ -1749,10 +2104,17 @@ function reconcileNodes(timeline, animateNew = false) {
       node.element.remove();
       nodes.delete(key);
     }, reducedMotion ? 20 : 720);
-  }
+	}
 
-	reconcileEdges(timeline, items, activeIds);
-	updateBounds(timeline, items, activeOrder, pendingOrder);
+	if (historyRendererAvailable) {
+		for (const edge of edges.values()) edge.path.remove();
+		edges.clear();
+		dirtyEdges.clear();
+		syncHistoryScene(timeline, items, activeIds, pendingIds);
+	} else {
+		reconcileEdges(timeline, items, activeIds);
+	}
+	updateBounds(currentSceneLayout, previousSceneEpoch, items.length > 0);
 	lastAnimatedRevision = timeline.revision;
 }
 
@@ -1801,46 +2163,70 @@ function reconcileEdges(timeline, items, activeIds) {
 	if (dirtyEdges.size) scheduleRender();
 }
 
-function boundsFor(positions) {
-  if (!positions.length) return { x: 180, y: 180, width: 520, height: 280 };
-	  const compact = isShortLandscapeLayout();
-	  const paddingX = compact ? 94 : 122;
-	  const paddingY = compact ? 44 : 104;
-	  const minX = Math.min(...positions.map((point) => point.x)) - paddingX;
-	  const maxX = Math.max(...positions.map((point) => point.x)) + paddingX;
-	  const minY = Math.min(...positions.map((point) => point.y)) - paddingY;
-	  const maxY = Math.max(...positions.map((point) => point.y)) + paddingY;
-  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+function fitScaleForBounds(bounds) {
+	const compact = isShortLandscapeLayout();
+	const availableWidth = innerWidth - (compact ? 24 : 48);
+	const viewport = graphViewport();
+	const padding = compact ? 32 : 100;
+	return Math.max(MIN_CAMERA_SCALE, Math.min(
+		availableWidth / Math.max(compact ? 180 : 320, bounds.width + padding),
+		viewport.height / Math.max(compact ? 120 : 260, bounds.height + padding),
+		1.12,
+	));
 }
 
-function mergeBounds(left, right) {
-  const minX = Math.min(left.x, right.x);
-  const minY = Math.min(left.y, right.y);
-  const maxX = Math.max(left.x + left.width, right.x + right.width);
-  const maxY = Math.max(left.y + left.height, right.y + right.height);
-  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+function interactiveScaleFloor() {
+	const viewedBounds = viewedEpochIndex === null
+		? null
+		: currentSceneLayout?.epochs[viewedEpochIndex]?.bounds;
+	const naturalFitScale = fitScaleForBounds(viewedBounds || fitTarget);
+	return sceneEngine.interactiveMinimumScale(naturalFitScale, MIN_CAMERA_SCALE);
 }
 
-function updateBounds(timeline, items, activeOrder, pendingOrder) {
-  const homePositions = items.map((_, index) => homePosition(index));
-	const itemsById = new Map(items.map((item) => [itemKey(item), item]));
-	const visibleCount = activeOrder.size + pendingOrder.size;
-	const focusPositions = (timeline.activeIds || []).map((id, index) => {
-		const item = itemsById.get(String(id));
-		return item ? focusPosition(item, index, activeOrder.size, visibleCount) : null;
-  }).filter(Boolean);
-	const pendingPositions = [...pendingOrder].map(([id, index]) => {
-		const item = itemsById.get(id);
-		return item ? pendingPosition(item, index, pendingOrder.size, activeOrder.size) : null;
-	}).filter(Boolean);
-	const activeBounds = boundsFor(focusPositions);
-	const pendingBounds = pendingPositions.length ? boundsFor(pendingPositions) : null;
-	const visibleBounds = viewMode === "window"
-		? pendingBounds
-			? mergeBounds(activeBounds, pendingBounds)
-			: activeBounds
-		: boundsFor(homePositions);
-	const worldBounds = boundsFor([...homePositions, ...focusPositions, ...pendingPositions]);
+function constrainCameraWithin(candidate, bounds) {
+	if (!bounds) return candidate;
+	const viewport = graphViewport();
+	return sceneEngine.constrainCameraToBounds(
+		candidate,
+		bounds,
+		{ width: innerWidth, height: viewport.height },
+		MIN_VISIBLE_SCENE_PIXELS,
+	);
+}
+
+function constrainCameraToRegions(candidate, regions) {
+	const viewport = graphViewport();
+	return sceneEngine.constrainCameraToContent(
+		candidate,
+		regions,
+		{ width: innerWidth, height: viewport.height },
+		MIN_VISIBLE_SCENE_PIXELS,
+	);
+}
+
+function constrainCamera(candidate, requireContent = false) {
+	const bounds = currentSceneLayout?.worldBounds;
+	if (!bounds) return candidate;
+	const viewport = graphViewport();
+	const dimensions = { width: innerWidth, height: viewport.height };
+	const bounded = sceneEngine.constrainCameraToBounds(
+		candidate,
+		bounds,
+		dimensions,
+		MIN_VISIBLE_SCENE_PIXELS,
+	);
+	const reachedWorldEdge = differs(candidate.x, bounded.x, POSITION_EPSILON)
+		|| differs(candidate.y, bounded.y, POSITION_EPSILON);
+	if (!requireContent && !reachedWorldEdge) return bounded;
+	return constrainCameraToRegions(bounded, cameraContentBounds);
+}
+
+function updateBounds(layout, previousSceneEpoch = null, hasItems = true) {
+	const activeBounds = layout.activeBounds;
+	const visibleBounds = viewMode === "window" ? layout.focusBounds : layout.homeBounds;
+	const worldBounds = layout.worldBounds;
+	if (hasItems) windowFrame.toggleAttribute("hidden", false);
+	else windowFrame.toggleAttribute("hidden", true);
 	const maxX = worldBounds.x + worldBounds.width;
 	const maxY = worldBounds.y + worldBounds.height;
 	if (
@@ -1854,30 +2240,45 @@ function updateBounds(timeline, items, activeOrder, pendingOrder) {
 	}
 	fitTarget = visibleBounds;
 
-  const worldWidth = Math.max(1000, maxX + 260);
-  const worldHeight = Math.max(800, maxY + 240);
+	const worldWidth = Math.max(1000, maxX + 260);
+	const worldHeight = Math.max(800, maxY + 240);
   world.style.width = `${worldWidth}px`;
   world.style.height = `${worldHeight}px`;
   edgeLayer.setAttribute("width", String(worldWidth));
   edgeLayer.setAttribute("height", String(worldHeight));
-  if (!freeCamera) fitView(false);
+	if (!freeCamera) {
+		fitView(false);
+		return;
+	}
+
+	const minimumScale = interactiveScaleFloor();
+	const previousTarget = cameraTarget;
+	cameraTarget = constrainCamera({
+		...cameraTarget,
+		scale: Math.min(MAX_CAMERA_SCALE, Math.max(minimumScale, cameraTarget.scale)),
+	});
+	const epochChanged = previousSceneEpoch !== null && previousSceneEpoch !== layout.currentEpoch;
+	if (epochChanged && viewedEpochIndex === null) {
+		cameraTarget = constrainCameraWithin(cameraTarget, activeBounds);
+		cameraTarget = constrainCameraToRegions(cameraTarget, activeCameraContentBounds);
+	}
+	if (
+		differs(previousTarget.x, cameraTarget.x, POSITION_EPSILON)
+		|| differs(previousTarget.y, cameraTarget.y, POSITION_EPSILON)
+		|| differs(previousTarget.scale, cameraTarget.scale, SCALE_EPSILON)
+	) markCameraDirty();
 }
 
 function fitView(reset = true) {
-  if (reset) freeCamera = false;
-	  const compact = isShortLandscapeLayout();
-	  const availableWidth = innerWidth - (compact ? 24 : 48);
-		const viewport = graphViewport();
-	  const padding = compact ? 32 : 100;
-  const scale = Math.min(
-	    availableWidth / Math.max(compact ? 180 : 320, fitTarget.width + padding),
-		viewport.height / Math.max(compact ? 120 : 260, fitTarget.height + padding),
-    1.12,
-  );
+  if (reset) {
+	freeCamera = false;
+	viewedEpochIndex = null;
+  }
+	const scale = fitScaleForBounds(fitTarget);
   const nextTarget = {
     x: fitTarget.x + fitTarget.width / 2,
     y: fitTarget.y + fitTarget.height / 2 + 8,
-	    scale: Math.max(MIN_CAMERA_SCALE, scale),
+	scale,
   };
 	const targetChanged = differs(cameraTarget.x, nextTarget.x, POSITION_EPSILON)
 		|| differs(cameraTarget.y, nextTarget.y, POSITION_EPSILON)
@@ -1925,6 +2326,7 @@ function renderFrame(time) {
   let nodeUpdates = 0;
   let edgeUpdates = 0;
   let keepAlive = false;
+	const completedHistoryHandoffs = [];
 
   const cameraMoving = cameraDirty
     || differs(camera.x, cameraTarget.x, POSITION_EPSILON)
@@ -1936,6 +2338,16 @@ function renderFrame(time) {
     camera.y = approach(camera.y, cameraTarget.y, ease, POSITION_EPSILON);
     camera.scale = approach(camera.scale, cameraTarget.scale, ease, SCALE_EPSILON);
 		world.style.transform = `translate(${innerWidth / 2 - camera.x * camera.scale}px, ${viewport.centerY - camera.y * camera.scale}px) scale(${camera.scale})`;
+		useHistoryRenderer((renderer) => renderer.setCamera({
+			x: camera.x,
+			y: camera.y,
+			scale: camera.scale,
+			centerX: innerWidth / 2,
+			centerY: viewport.centerY,
+			viewportWidth: innerWidth,
+			viewportHeight: viewport.height,
+		}));
+		scheduleFallbackRefresh();
     cameraDirty = false;
     if (
       differs(camera.x, cameraTarget.x, POSITION_EPSILON)
@@ -2022,6 +2434,7 @@ function renderFrame(time) {
       keepAlive = true;
     } else {
       node.element.classList.remove("moving");
+		if (node.handoffToHistory && historyRendererAvailable) completedHistoryHandoffs.push(node);
     }
   }
 
@@ -2032,7 +2445,42 @@ function renderFrame(time) {
     if (edge && updateEdge(edge)) edgeUpdates += 1;
   }
 
-  if (hoveredNode && (cameraMoving || nodeUpdates > 0)) positionTooltip(hoveredNode);
+	if (historyRendererAvailable && historyRenderer && nodeUpdates > 0) {
+		const positions = {};
+		const handoffOffsets = {};
+		for (const node of frameNodes) {
+			if (node.renderX === undefined || node.renderY === undefined) continue;
+			if (node.handoffToHistory) {
+				handoffOffsets[node.key] = {
+					x: node.renderX - node.targetX,
+					y: node.renderY - node.targetY,
+				};
+			} else {
+				positions[node.key] = { x: node.renderX, y: node.renderY };
+			}
+		}
+		useHistoryRenderer((renderer) => {
+			renderer.setNodePositions(positions);
+			renderer.setOffsets(handoffOffsets);
+		});
+	}
+
+	for (const node of completedHistoryHandoffs) {
+		if (nodes.get(node.key) !== node || !node.handoffToHistory) continue;
+		node.handoffToHistory = false;
+		historyHandoffIds.delete(node.key);
+		movingNodes.delete(node);
+		node.element.remove();
+		nodes.delete(node.key);
+		useHistoryRenderer((renderer) => {
+			renderer.clearOffset(node.key);
+			renderer.setNodeDrawCard(node.key, true);
+		});
+	}
+
+  if (hoveredNode && !hoveredNode.history && (cameraMoving || nodeUpdates > 0)) {
+    positionTooltip(hoveredNode);
+  }
 
   renderStats.frames += 1;
   renderStats.totalNodeUpdates += nodeUpdates;
@@ -2047,6 +2495,7 @@ function renderFrame(time) {
     scheduleRender();
   } else {
     renderLoopActive = false;
+    document.body.dataset.renderLoop = "sleeping";
     renderStats.sleepingSince = time;
   }
 }
@@ -2233,14 +2682,19 @@ function syncDetailPanel() {
 	}
 }
 
-function openDetail(node) {
+function openDetailById(itemId) {
 	if (!selectedStreamId) return;
-	detailSelection = { streamId: selectedStreamId, itemId: node.key };
+	detailSelection = { streamId: selectedStreamId, itemId };
   hideTooltip();
   syncDetailPanel();
   document.body.dataset.detailOpen = "true";
   detailPanel.setAttribute("aria-hidden", "false");
   $("#detail-close").focus({ preventScroll: true });
+}
+
+function openDetail(node) {
+	if (!node.item.active && !node.item.pending) travelToHistory(node.key);
+	openDetailById(node.key);
 }
 
 function closeDetail() {
@@ -2253,66 +2707,255 @@ function closeDetail() {
 detailBackdrop.addEventListener("click", closeDetail);
 $("#detail-close").addEventListener("click", closeDetail);
 addEventListener("keydown", (event) => {
-	if (event.key === "Escape" && detailSelection) closeDetail();
+	if (event.key === "Escape" && detailSelection) {
+		closeDetail();
+		return;
+	}
+	if (
+		detailSelection
+		|| event.altKey
+		|| event.ctrlKey
+		|| event.metaKey
+		|| event.shiftKey
+		|| (event.target instanceof Element && event.target.closest("button, input, textarea, select, [contenteditable='true']"))
+	) return;
+	if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+	if (navigateScene(event.key === "ArrowRight" ? 1 : -1)) event.preventDefault();
 });
+
+function screenToWorld(screenX, screenY, sourceCamera = camera) {
+	const viewportBounds = graphViewport();
+	return sceneEngine.screenPointToWorld(
+		{ x: screenX, y: screenY },
+		sourceCamera,
+		{ x: innerWidth / 2, y: viewportBounds.centerY },
+	);
+}
+
+function worldToScreen(worldX, worldY, sourceCamera = camera) {
+	const viewportBounds = graphViewport();
+	return sceneEngine.worldPointToScreen(
+		{ x: worldX, y: worldY },
+		sourceCamera,
+		{ x: innerWidth / 2, y: viewportBounds.centerY },
+	);
+}
+
+function cameraAtScreenPoint(worldPoint, screenX, screenY, scale) {
+	const viewportBounds = graphViewport();
+	return sceneEngine.cameraForScreenPoint(
+		worldPoint,
+		{ x: screenX, y: screenY },
+		scale,
+		{ x: innerWidth / 2, y: viewportBounds.centerY },
+	);
+}
+
+function travelToEpoch(epochIndex) {
+	if (!currentSceneLayout) return false;
+	const boundedIndex = Math.max(0, Math.min(currentSceneLayout.currentEpoch, epochIndex));
+	const epoch = currentSceneLayout.epochs[boundedIndex];
+	if (!epoch) return;
+	viewedEpochIndex = boundedIndex;
+	freeCamera = true;
+	cameraTarget = {
+		x: epoch.bounds.x + epoch.bounds.width / 2,
+		y: epoch.bounds.y + epoch.bounds.height / 2,
+		scale: fitScaleForBounds(epoch.bounds),
+	};
+	markCameraDirty();
+	return true;
+}
+
+function returnToNaturalView() {
+	viewedEpochIndex = null;
+	freeCamera = false;
+	if (currentSceneLayout) {
+		fitTarget = viewMode === "window"
+			? currentSceneLayout.focusBounds
+			: currentSceneLayout.homeBounds;
+	}
+	fitView(false);
+}
+
+function navigateScene(direction) {
+	if (!currentSceneLayout || direction === 0) return false;
+	if (viewedEpochIndex === null) {
+		if (direction > 0 || currentSceneLayout.currentEpoch === 0) return false;
+		return travelToEpoch(currentSceneLayout.currentEpoch - 1);
+	}
+	const target = viewedEpochIndex + Math.sign(direction);
+	if (target > currentSceneLayout.currentEpoch) {
+		returnToNaturalView();
+		return true;
+	}
+	if (target < 0) return false;
+	return travelToEpoch(target);
+}
+
+function travelToHistory(itemId) {
+	const placement = currentSceneLayout?.placements.get(itemId);
+	if (!placement) return false;
+	return travelToEpoch(placement.epoch);
+}
+
+function historyVisualAt(clientX, clientY) {
+	const point = screenToWorld(clientX, clientY);
+	return readHistoryRenderer((renderer) => renderer.hitTestWorld(point.x, point.y));
+}
+
+function showHistoryTooltip(visual, clientX, clientY) {
+	hoveredNode = { history: true, key: visual.id };
+	tooltip.textContent = `${visual.kind}\n${visual.detail}`;
+	tooltip.classList.add("visible");
+	tooltip.style.left = "0px";
+	tooltip.style.top = "0px";
+	const width = tooltip.offsetWidth;
+	const height = tooltip.offsetHeight;
+	const left = Math.max(10, Math.min(innerWidth - width - 10, clientX + 14));
+	let top = clientY - height - 12;
+	if (top < 10) top = clientY + 16;
+	tooltip.style.left = `${left}px`;
+	tooltip.style.top = `${top}px`;
+}
+
+function animateHistoryReturn(itemId, fromX, fromY) {
+	if (!historyRendererAvailable) return;
+	if (reducedMotion) {
+		useHistoryRenderer((renderer) => renderer.clearOffset(itemId));
+		return;
+	}
+	const startedAt = performance.now();
+	const duration = 360;
+	const step = (now) => {
+		const progress = Math.min(1, (now - startedAt) / duration);
+		if (progress >= 1) {
+			useHistoryRenderer((renderer) => renderer.clearOffset(itemId));
+			return;
+		}
+		const remaining = Math.pow(1 - progress, 3);
+		if (!useHistoryRenderer((renderer) => renderer.setOffset(itemId, fromX * remaining, fromY * remaining))) return;
+		requestAnimationFrame(step);
+	};
+	requestAnimationFrame(step);
+}
 
 const touches = new Map();
 let pan = null;
 let pinch = null;
+let historyPointer = null;
+
+function beginPan(x, y) {
+	return { x, y, startX: x, startY: y };
+}
 
 viewport.addEventListener("pointerdown", (event) => {
   hideTooltip();
+	const historyVisual = historyVisualAt(event.clientX, event.clientY);
+	if (historyVisual && touches.size === 0) {
+		historyPointer = {
+			id: historyVisual.id,
+			pointerId: event.pointerId,
+			x: event.clientX,
+			y: event.clientY,
+			dragX: 0,
+			dragY: 0,
+			moved: false,
+		};
+		viewport.classList.add("dragging");
+		try { viewport.setPointerCapture(event.pointerId); } catch (_) {}
+		return;
+	}
   touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
   if (touches.size === 1) {
-    pan = { x: event.clientX, y: event.clientY, cameraX: camera.x, cameraY: camera.y };
+    pan = beginPan(event.clientX, event.clientY);
   } else if (touches.size === 2) {
     pan = null;
     const [a, b] = [...touches.values()];
     const middle = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-    pinch = {
-      distance: Math.hypot(a.x - b.x, a.y - b.y) || 1,
-      scale: camera.scale,
-      worldX: camera.x + (middle.x - innerWidth / 2) / camera.scale,
-      worldY: camera.y + (middle.y - innerHeight / 2) / camera.scale,
-    };
+	    pinch = {
+	      distance: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+	      scale: camera.scale,
+			world: screenToWorld(middle.x, middle.y),
+	    };
   }
   viewport.classList.add("dragging");
   try { viewport.setPointerCapture(event.pointerId); } catch (_) {}
 });
 
 viewport.addEventListener("pointermove", (event) => {
+	if (historyPointer?.pointerId === event.pointerId) {
+		const deltaX = (event.clientX - historyPointer.x) / camera.scale;
+		const deltaY = (event.clientY - historyPointer.y) / camera.scale;
+		if (Math.abs(event.clientX - historyPointer.x) + Math.abs(event.clientY - historyPointer.y) > 5) {
+			historyPointer.moved = true;
+		}
+		if (historyPointer.moved) {
+			historyPointer.dragX = deltaX;
+			historyPointer.dragY = deltaY;
+			useHistoryRenderer((renderer) => renderer.setOffset(historyPointer.id, deltaX, deltaY));
+		}
+		return;
+	}
+	if (!touches.has(event.pointerId)) {
+		const visual = historyVisualAt(event.clientX, event.clientY);
+		if (visual) showHistoryTooltip(visual, event.clientX, event.clientY);
+		else if (hoveredNode?.history) hideTooltip();
+		return;
+	}
   if (!touches.has(event.pointerId)) return;
   touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
   if (pinch && touches.size >= 2) {
     freeCamera = true;
-    const [a, b] = [...touches.values()];
-    const middle = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-    const distance = Math.hypot(a.x - b.x, a.y - b.y) || 1;
-	    camera.scale = Math.min(2.4, Math.max(MIN_CAMERA_SCALE, pinch.scale * distance / pinch.distance));
-    camera.x = pinch.worldX - (middle.x - innerWidth / 2) / camera.scale;
-    camera.y = pinch.worldY - (middle.y - innerHeight / 2) / camera.scale;
-    cameraTarget = { ...camera };
+	    const [a, b] = [...touches.values()];
+	    const middle = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+	    const distance = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+		const scale = sceneEngine.clampInteractiveScale(
+			pinch.scale,
+			pinch.scale * distance / pinch.distance,
+			interactiveScaleFloor(),
+			MAX_CAMERA_SCALE,
+		);
+		camera = constrainCamera(cameraAtScreenPoint(pinch.world, middle.x, middle.y, scale), true);
+		cameraTarget = { ...camera };
     markCameraDirty();
     return;
   }
   if (!pan) return;
-  const deltaX = event.clientX - pan.x;
-  const deltaY = event.clientY - pan.y;
-  if (Math.abs(deltaX) + Math.abs(deltaY) > 3) freeCamera = true;
+	const totalDeltaX = event.clientX - pan.startX;
+	const totalDeltaY = event.clientY - pan.startY;
+	if (Math.abs(totalDeltaX) + Math.abs(totalDeltaY) > 3) freeCamera = true;
   if (freeCamera) {
-    camera.x = pan.cameraX - deltaX / camera.scale;
-    camera.y = pan.cameraY - deltaY / camera.scale;
+		camera = constrainCamera(sceneEngine.cameraForPan(
+			camera,
+			{ x: pan.x, y: pan.y },
+			{ x: event.clientX, y: event.clientY },
+		));
+		pan.x = event.clientX;
+		pan.y = event.clientY;
     cameraTarget = { ...camera };
     markCameraDirty();
   }
 });
 
 function endPointer(event) {
+	if (historyPointer?.pointerId === event.pointerId) {
+		const released = historyPointer;
+		historyPointer = null;
+		viewport.classList.remove("dragging");
+		if (released.moved) animateHistoryReturn(released.id, released.dragX, released.dragY);
+		else {
+			useHistoryRenderer((renderer) => renderer.clearOffset(released.id));
+			travelToHistory(released.id);
+			openDetailById(released.id);
+		}
+		return;
+	}
   touches.delete(event.pointerId);
   if (touches.size < 2) pinch = null;
   if (touches.size === 1) {
     const [point] = [...touches.values()];
-    pan = { x: point.x, y: point.y, cameraX: camera.x, cameraY: camera.y };
+    pan = beginPan(point.x, point.y);
   } else if (touches.size === 0) {
     pan = null;
     viewport.classList.remove("dragging");
@@ -2323,14 +2966,22 @@ viewport.addEventListener("pointerup", endPointer);
 viewport.addEventListener("pointercancel", endPointer);
 viewport.addEventListener("wheel", (event) => {
   event.preventDefault();
-  freeCamera = true;
-  const factor = Math.exp(-event.deltaY * 0.0012);
-  const worldX = camera.x + (event.clientX - innerWidth / 2) / camera.scale;
-  const worldY = camera.y + (event.clientY - innerHeight / 2) / camera.scale;
-	  camera.scale = Math.min(2.4, Math.max(MIN_CAMERA_SCALE, camera.scale * factor));
-  camera.x = worldX - (event.clientX - innerWidth / 2) / camera.scale;
-  camera.y = worldY - (event.clientY - innerHeight / 2) / camera.scale;
-  cameraTarget = { ...camera };
+	if (!currentPayload || timelineFrom(currentPayload).history.length === 0) return;
+	const viewportBounds = graphViewport();
+	const normalizedDelta = sceneEngine.normalizeWheelDelta(event.deltaY, event.deltaMode, viewportBounds.height);
+	if (normalizedDelta === 0) return;
+	freeCamera = true;
+	const sourceCamera = { ...cameraTarget };
+	const worldPoint = screenToWorld(event.clientX, event.clientY, sourceCamera);
+	const scale = sceneEngine.wheelZoomScale(
+		sourceCamera.scale,
+		normalizedDelta,
+		WHEEL_ZOOM_SENSITIVITY,
+		interactiveScaleFloor(),
+		MAX_CAMERA_SCALE,
+	);
+	cameraTarget = cameraAtScreenPoint(worldPoint, event.clientX, event.clientY, scale);
+	cameraTarget = constrainCamera(cameraTarget, true);
   markCameraDirty();
 }, { passive: false });
 
@@ -2354,12 +3005,29 @@ function updateChrome(payload) {
     : "? / ?";
 }
 
-function applyPayload(payload, animateNew = false) {
+function reconciliationDimensionsKey() {
+	const dimensions = nodeDimensions();
+	return `${dimensions.width}:${dimensions.height}:${isShortLandscapeLayout()}:${isMobileLayout()}`;
+}
+
+function applyPayload(payload, animateNew = false, force = false) {
   currentPayload = payload;
   updateChrome(payload);
 	const timeline = timelineFrom(payload);
 	$("#empty-state").classList.toggle("hidden", timeline.history.length > 0);
-	reconcileNodes(timeline, animateNew);
+	const dimensionsKey = reconciliationDimensionsKey();
+	const needsReconcile = force
+		|| timeline !== lastReconciledTimeline
+		|| viewMode !== lastReconciledMode
+		|| historyRendererState !== lastReconciledRendererState
+		|| dimensionsKey !== lastReconciledDimensions;
+	if (needsReconcile) {
+		reconcileNodes(timeline, animateNew);
+		lastReconciledTimeline = timeline;
+		lastReconciledMode = viewMode;
+		lastReconciledRendererState = historyRendererState;
+		lastReconciledDimensions = dimensionsKey;
+	}
 	if (detailSelection) syncDetailPanel();
 }
 
@@ -2367,6 +3035,7 @@ function setMode(mode) {
   viewMode = mode;
   syncModeChrome();
   freeCamera = false;
+  viewedEpochIndex = null;
   if (currentPayload) applyPayload(currentPayload);
 }
 
@@ -2387,15 +3056,28 @@ sessionTabs.addEventListener("keydown", (event) => {
 });
 addEventListener("resize", () => {
 	syncGraphViewport();
+	useHistoryRenderer((renderer) => renderer.resize(innerWidth, innerHeight));
   if (currentPayload) applyPayload(currentPayload);
-  if (!freeCamera) fitView(false);
+	if (freeCamera) {
+		camera = constrainCamera(camera, true);
+		cameraTarget = constrainCamera(cameraTarget, true);
+	} else fitView(false);
   markCameraDirty();
 });
 
-function demoPayload() {
-	const kinds = ["system", "user", "assistant", "tool", "assistant", "user", "assistant", "tool", "user", "assistant", "tool", "assistant", "user", "assistant", "tool", "assistant", "user", "assistant", "memory", "user", "assistant", "tool", "assistant"];
+function demoPayload(itemCount = 23) {
+	const defaultKinds = ["system", "user", "assistant", "tool", "assistant", "user", "assistant", "tool", "user", "assistant", "tool", "assistant", "user", "assistant", "tool", "assistant", "user", "assistant", "memory", "user", "assistant", "tool", "assistant"];
+	const safeItemCount = Math.max(6, Math.min(10_000, Math.trunc(itemCount) || defaultKinds.length));
+	const summaryIndex = safeItemCount === defaultKinds.length ? 18 : Math.max(2, Math.floor(safeItemCount * 0.7));
+	const generatedKinds = ["user", "assistant", "tool", "assistant", "user", "assistant", "tool"];
+	const kinds = safeItemCount === defaultKinds.length
+		? defaultKinds
+		: Array.from({ length: safeItemCount }, (_, index) => (
+			index === 0 ? "system" : index === summaryIndex ? "memory" : generatedKinds[(index - 1) % generatedKinds.length]
+		));
+	const memoryId = `memory-${summaryIndex}`;
 	const history = kinds.map((kind, index) => ({
-		id: kind === "system" ? "system-prompt" : kind === "memory" ? "memory-18" : `message-${index}`,
+		id: kind === "system" ? "system-prompt" : kind === "memory" ? memoryId : `message-${index}`,
 		kind,
 		order: index,
 		firstSeenAt: Date.now() - (kinds.length - index) * 1000,
@@ -2416,7 +3098,7 @@ function demoPayload() {
 			}],
 		},
 	}));
-	const activeIds = ["system-prompt", "memory-18", ...history.slice(-4).map(itemKey)];
+	const activeIds = ["system-prompt", memoryId, ...history.slice(-4).map(itemKey)];
   return {
     sequence: 1,
     publishedAt: Date.now(),
@@ -2438,13 +3120,13 @@ function demoPayload() {
 				revision: 7,
 				history,
 				activeIds,
-				enteredIds: ["memory-18", ...history.slice(-4).map(itemKey)],
+				enteredIds: [memoryId, ...history.slice(-4).map(itemKey)],
 				retainedIds: ["system-prompt"],
-				exitedIds: history.slice(1, 18).map(itemKey),
+				exitedIds: history.slice(1, summaryIndex).map(itemKey),
 				observedIds: [],
 				confirmedIds: [],
 				pendingIds: [],
-				summaryEdges: history.slice(1, 18).map((item) => ({ from: item.id, to: "memory-18", kind: "summary" })),
+				summaryEdges: history.slice(1, summaryIndex).map((item) => ({ from: item.id, to: memoryId, kind: "summary" })),
 			},
   };
 }
@@ -2524,7 +3206,8 @@ function connectEventSource() {
 const query = new URLSearchParams(location.search);
 if (query.get("demo") === "1") {
   setConnection("live", "demo");
-  const primary = demoPayload();
+  const requestedDemoItems = Number(query.get("items"));
+  const primary = demoPayload(Number.isFinite(requestedDemoItems) ? requestedDemoItems : undefined);
   const compacted = structuredClone(primary);
   compacted.snapshot.model = "gpt-5.4";
   compacted.snapshot.tokens = 118400;
@@ -2554,63 +3237,84 @@ if (query.get("demo") === "1") {
 } else connectEventSource();
 
 globalThis.__contextRail = {
-  diagnostics: () => ({
-    connected: $("#connection").dataset.state,
-    mode: viewMode,
-		selectedStreamId,
-		activeStreamId,
-		followActive,
-		pendingDeltaStreams: [...deltaTransfers.keys()],
-		sessions: sessionSummaries.map((summary) => ({ ...summary })),
-		historyIds: [...nodes.keys()],
-		activeIds: [...nodes.values()].filter((node) => node.item.active).map((node) => node.key),
-		inactiveIds: [...nodes.values()].filter((node) => !node.item.active && !node.item.pending).map((node) => node.key),
-		pendingIds: [...nodes.values()].filter((node) => node.item.pending).map((node) => node.key),
-		detail: {
-			streamId: detailSelection?.streamId || null,
-			itemId: detailSelection?.itemId || null,
-			open: document.body.dataset.detailOpen === "true",
-			state: $("#detail-state").textContent,
-			role: $("#detail-role").textContent,
-			text: detailContent.textContent,
-		},
-		queuedIds: [...nodes.values()].filter((node) => !node.revealed).map((node) => node.key),
-		positions: Object.fromEntries([...nodes.values()].map((node) => [node.key, {
-			homeX: node.homeX,
-			homeY: node.homeY,
-			focusX: node.focusX,
-			focusY: node.focusY,
-			targetX: node.targetX,
-			targetY: node.targetY,
-		}])),
-    edges: edges.size,
+	diagnostics: () => {
+		const timeline = currentPayload ? timelineFrom(currentPayload) : { history: [], activeIds: [], pendingIds: [] };
+		const historyIds = timeline.history.map(itemKey);
+		const activeIds = new Set((timeline.activeIds || []).map(String));
+		const pendingIds = new Set((timeline.pendingIds || []).map(String));
+		const rendererDiagnostics = readHistoryRenderer((renderer) => renderer.diagnostics());
+		return {
+			connected: $("#connection").dataset.state,
+			mode: viewMode,
+			selectedStreamId,
+			activeStreamId,
+			followActive,
+			pendingDeltaStreams: [...deltaTransfers.keys()],
+			sessions: sessionSummaries.map((summary) => ({ ...summary })),
+			historyIds,
+			activeIds: historyIds.filter((id) => activeIds.has(id)),
+			inactiveIds: historyIds.filter((id) => !activeIds.has(id) && !pendingIds.has(id)),
+			pendingIds: historyIds.filter((id) => pendingIds.has(id)),
+			detail: {
+				streamId: detailSelection?.streamId || null,
+				itemId: detailSelection?.itemId || null,
+				open: document.body.dataset.detailOpen === "true",
+				state: $("#detail-state").textContent,
+				role: $("#detail-role").textContent,
+				text: detailContent.textContent,
+			},
+			queuedIds: [...nodes.values()].filter((node) => !node.revealed).map((node) => node.key),
+			positions: Object.fromEntries([...nodes.values()].map((node) => [node.key, {
+				homeX: node.homeX,
+				homeY: node.homeY,
+				focusX: node.focusX,
+				focusY: node.focusY,
+				targetX: node.targetX,
+				targetY: node.targetY,
+			}])),
+			edges: rendererDiagnostics
+				? rendererDiagnostics.staticEdgeCount + rendererDiagnostics.dynamicEdgeCount
+				: edges.size,
+			scene: {
+				epochs: currentSceneLayout?.epochs.length || 0,
+				currentEpoch: currentSceneLayout?.currentEpoch ?? null,
+				viewedEpoch: viewedEpochIndex,
+			},
+			renderer: {
+				state: historyRendererState,
+				available: historyRendererAvailable,
+				error: historyRendererError,
+				domNodeCount: nodes.size,
+				...(rendererDiagnostics || {}),
+			},
 			renderLoop: {
 				active: renderLoopActive,
 				scheduled: animationFrameId !== null,
 				driver: animationFrameId === null ? null : animationFrameUsesTimeout ? "timeout" : "raf",
-			movingNodes: movingNodes.size,
-			dirtyEdges: dirtyEdges.size,
-			frames: renderStats.frames,
-			lastFrameAt: renderStats.lastFrameAt,
-			lastFrame: {
-				nodeUpdates: renderStats.lastFrameNodeUpdates,
-				edgeUpdates: renderStats.lastFrameEdgeUpdates,
+				movingNodes: movingNodes.size,
+				dirtyEdges: dirtyEdges.size,
+				frames: renderStats.frames,
+				lastFrameAt: renderStats.lastFrameAt,
+				lastFrame: {
+					nodeUpdates: renderStats.lastFrameNodeUpdates,
+					edgeUpdates: renderStats.lastFrameEdgeUpdates,
+				},
+				peakFrame: {
+					nodeUpdates: renderStats.peakFrameNodeUpdates,
+					edgeUpdates: renderStats.peakFrameEdgeUpdates,
+				},
+				totalUpdates: {
+					nodes: renderStats.totalNodeUpdates,
+					edges: renderStats.totalEdgeUpdates,
+				},
+				sleepingForMs: renderLoopActive || renderStats.sleepingSince === null
+					? 0
+					: Math.max(0, Math.round(performance.now() - renderStats.sleepingSince)),
 			},
-			peakFrame: {
-				nodeUpdates: renderStats.peakFrameNodeUpdates,
-				edgeUpdates: renderStats.peakFrameEdgeUpdates,
-			},
-			totalUpdates: {
-				nodes: renderStats.totalNodeUpdates,
-				edges: renderStats.totalEdgeUpdates,
-			},
-			sleepingForMs: renderLoopActive || renderStats.sleepingSince === null
-				? 0
-				: Math.max(0, Math.round(performance.now() - renderStats.sleepingSince)),
-		},
-    phase: document.body.dataset.phase,
-    frame: { ...frameTarget },
-  }),
+			phase: document.body.dataset.phase,
+			frame: { ...frameTarget },
+		};
+	},
 };
 
 document.addEventListener("visibilitychange", () => {

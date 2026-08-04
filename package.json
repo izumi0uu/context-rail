@@ -35,7 +35,11 @@
     ]
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "npm run build:node && npm run build:web",
+    "build:node": "tsc -p tsconfig.build.json",
+    "build:web": "npm run build:web:core && npm run build:web:pixi",
+    "build:web:core": "esbuild web/src/scene-core.ts --bundle --minify --format=iife --global-name=ContextRailCore --legal-comments=external --outfile=web/assets/scene-core.js",
+    "build:web:pixi": "esbuild web/src/pixi-history.ts --bundle --minify --format=iife --global-name=ContextRailPixi --legal-comments=external --outfile=web/assets/pixi-history.js",
     "check": "npm run typecheck && npm test",
     "hub": "node --experimental-strip-types src/hub-cli.ts",
     "prepare": "npm run build",
@@ -48,6 +52,8 @@
 	},
   "devDependencies": {
     "@types/node": "^26.1.2",
+	"esbuild": "0.28.1",
+	"pixi.js": "8.19.0",
     "typescript": "^6.0.3"
   }
 }

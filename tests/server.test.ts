@@ -200,6 +200,32 @@ test("serves a multi-session bootstrap and publishes authenticated updates", asy
 	assert.equal(viewer.url.includes(token), false);
 	assert.equal(viewer.viewerUrl, `${viewer.url}#token=viewer-test-token`);
 
+	const coreAsset = await fetch(`${viewer.url}assets/scene-core.js`);
+	assert.equal(coreAsset.status, 200);
+	assert.match(coreAsset.headers.get("content-type") ?? "", /text\/javascript/);
+	assert.equal(coreAsset.headers.get("x-content-type-options"), "nosniff");
+	assert.match(await coreAsset.text(), /ContextRailCore/);
+	const coreAssetWithQuery = await fetch(`${viewer.url}assets/scene-core.js?revision=test`);
+	assert.equal(coreAssetWithQuery.status, 200);
+	const coreSourceMap = await fetch(`${viewer.url}assets/scene-core.js.map`);
+	assert.equal(coreSourceMap.status, 404);
+	const nestedCoreAsset = await fetch(`${viewer.url}assets/scene-core.js/extra`);
+	assert.equal(nestedCoreAsset.status, 404);
+
+	const rendererAsset = await fetch(`${viewer.url}assets/pixi-history.js`);
+	assert.equal(rendererAsset.status, 200);
+	assert.match(rendererAsset.headers.get("content-type") ?? "", /text\/javascript/);
+	assert.equal(rendererAsset.headers.get("x-content-type-options"), "nosniff");
+	assert.match(await rendererAsset.text(), /ContextRailPixi/);
+	const rendererAssetWithQuery = await fetch(`${viewer.url}assets/pixi-history.js?revision=test`);
+	assert.equal(rendererAssetWithQuery.status, 200);
+	const rendererSourceMap = await fetch(`${viewer.url}assets/pixi-history.js.map`);
+	assert.equal(rendererSourceMap.status, 404);
+	const unknownRendererAsset = await fetch(`${viewer.url}assets/other-renderer.js`);
+	assert.equal(unknownRendererAsset.status, 404);
+	const nestedRendererAsset = await fetch(`${viewer.url}assets/pixi-history.js/extra`);
+	assert.equal(nestedRendererAsset.status, 404);
+
 	const missingToken = await fetch(`${viewer.url}events`);
 	assert.equal(missingToken.status, 401);
 	const wrongToken = await fetch(`${viewer.url}events?token=wrong-token`);
@@ -247,6 +273,44 @@ test("serves a multi-session bootstrap and publishes authenticated updates", asy
 
 	const health = await fetch(`${viewer.url}health`);
 	assert.deepEqual(await health.json(), { ok: true, instanceId: "hub-test", clients: 0, sessions: 3 });
+});
+
+test("starts and serves the DOM fallback when the optional Pixi asset is unavailable", async (t) => {
+	const assetReads: string[] = [];
+	const viewer = await startContextRailServer({
+		html: "<!doctype html><script src='./assets/scene-core.js'></script><script src='./assets/pixi-history.js'></script>",
+		webAssetLoader: async (path) => {
+			assetReads.push(path);
+			if (path.endsWith("/pixi-history.js")) throw new Error("optional Pixi asset unavailable");
+			return Buffer.from("var ContextRailCore = {};", "utf8");
+		},
+	});
+	t.after(() => viewer.stop());
+
+	const page = await fetch(viewer.url);
+	assert.equal(page.status, 200);
+	const coreAsset = await fetch(`${viewer.url}assets/scene-core.js`);
+	assert.equal(coreAsset.status, 200);
+	assert.match(await coreAsset.text(), /ContextRailCore/);
+	assert.equal((await fetch(`${viewer.url}assets/scene-core.js?again=1`)).status, 200);
+	const pixiAsset = await fetch(`${viewer.url}assets/pixi-history.js`);
+	assert.equal(pixiAsset.status, 404);
+	assert.equal(await pixiAsset.text(), "Not found");
+	assert.equal((await fetch(`${viewer.url}health`)).status, 200);
+	assert.equal(assetReads.filter((path) => path.endsWith("/scene-core.js")).length, 1);
+	assert.equal(assetReads.filter((path) => path.endsWith("/pixi-history.js")).length, 1);
+});
+
+test("refuses to start without the required scene core", async () => {
+	await assert.rejects(
+		startContextRailServer({
+			html: "<!doctype html>",
+			webAssetLoader: async () => {
+				throw new Error("required scene core unavailable");
+			},
+		}),
+		/required scene core unavailable/,
+	);
 });
 
 test("rejects a shared producer and viewer capability", async () => {

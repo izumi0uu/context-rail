@@ -26,6 +26,29 @@ import { projectRenderState, projectSessionSource } from "./hub-schema.ts";
 import type { RenderState } from "./render.ts";
 
 const DEFAULT_HTML_PATH = fileURLToPath(new URL("../web/index.html", import.meta.url));
+interface DefaultWebAsset {
+	path: string;
+	contentType: string;
+	optional?: boolean;
+}
+
+const DEFAULT_WEB_ASSETS: ReadonlyMap<string, DefaultWebAsset> = new Map([
+	[
+		"/assets/scene-core.js",
+		{
+			path: fileURLToPath(new URL("../web/assets/scene-core.js", import.meta.url)),
+			contentType: "text/javascript; charset=utf-8",
+		},
+	],
+	[
+		"/assets/pixi-history.js",
+		{
+			path: fileURLToPath(new URL("../web/assets/pixi-history.js", import.meta.url)),
+			contentType: "text/javascript; charset=utf-8",
+			optional: true,
+		},
+	],
+]);
 const MAX_REQUEST_BYTES = 2 * 1024 * 1024;
 const DEFAULT_REQUEST_BODY_TIMEOUT_MS = 5_000;
 const DEFAULT_HEARTBEAT_TTL_MS = 30_000;
@@ -84,6 +107,7 @@ export interface StartContextRailServerOptions {
 	maxPendingDeltaAggregateBytes?: number;
 	pendingDeltaTtlMs?: number;
 	now?: () => number;
+	webAssetLoader?: (path: string) => Promise<Buffer>;
 }
 
 interface StoredSession extends ContextRailSessionState {
@@ -275,6 +299,24 @@ export async function startContextRailServer(
 	);
 	const now = options.now ?? Date.now;
 	const html = options.html ?? (await readFile(DEFAULT_HTML_PATH, "utf8"));
+	const sourceWebAssetLoader = options.webAssetLoader ?? readFile;
+	const webAssetReads = new Map<string, Promise<Buffer>>();
+	const webAssetLoader = (path: string): Promise<Buffer> => {
+		let pending = webAssetReads.get(path);
+		if (!pending) {
+			pending = sourceWebAssetLoader(path).catch((error: unknown) => {
+				webAssetReads.delete(path);
+				throw error;
+			});
+			webAssetReads.set(path, pending);
+		}
+		return pending;
+	};
+	await Promise.all(
+		[...DEFAULT_WEB_ASSETS.values()]
+			.filter((asset) => !asset.optional)
+			.map((asset) => webAssetLoader(asset.path)),
+	);
 	const instanceId = options.instanceId ?? randomUUID();
 	const clients = new Set<SseClient>();
 	const sessions = new Map<string, StoredSession>();
@@ -726,6 +768,32 @@ export async function startContextRailServer(
 					"X-Content-Type-Options": "nosniff",
 				});
 				response.end(html);
+				return;
+			}
+
+			const webAsset = DEFAULT_WEB_ASSETS.get(pathname);
+			if (request.method === "GET" && webAsset) {
+				let contents: Buffer;
+				try {
+					contents = await webAssetLoader(webAsset.path);
+				} catch (error: unknown) {
+					if (!webAsset.optional) throw error;
+					response.writeHead(404, {
+						"Cache-Control": "no-store",
+						"Content-Type": "text/plain; charset=utf-8",
+						"X-Content-Type-Options": "nosniff",
+					});
+					response.end("Not found");
+					return;
+				}
+				response.writeHead(200, {
+					"Cache-Control": "no-store",
+					"Content-Type": webAsset.contentType,
+					"Cross-Origin-Resource-Policy": "same-origin",
+					"Referrer-Policy": "no-referrer",
+					"X-Content-Type-Options": "nosniff",
+				});
+				response.end(contents);
 				return;
 			}
 
