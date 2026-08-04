@@ -40,6 +40,16 @@ function sameValue(left: unknown, right: unknown): boolean {
 	return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function unchangedHistoryItem(previous: HistoryItem | undefined, next: HistoryItem): boolean {
+	if (!previous) return false;
+	if (
+		previous.lastSeenAt !== next.lastSeenAt ||
+		previous.pending !== next.pending ||
+		previous.confirmedAt !== next.confirmedAt
+	) return false;
+	return sameValue(previous, next);
+}
+
 function requiresTimelineReset(previous: RenderState["timeline"], next: NonNullable<RenderState["timeline"]>): boolean {
 	if (!previous) return true;
 	if (next.revision < previous.revision || next.history.length < previous.history.length) return true;
@@ -70,7 +80,7 @@ export function diffRenderState(previous: RenderState | undefined, next: RenderS
 	);
 	const historyUpserts = timelineReset
 		? next.timeline.history
-		: next.timeline.history.filter((item) => !sameValue(previousHistory.get(item.id), item));
+		: next.timeline.history.filter((item) => !unchangedHistoryItem(previousHistory.get(item.id), item));
 	const summaryEdgeUpserts = timelineReset
 		? next.timeline.summaryEdges
 		: next.timeline.summaryEdges.filter(

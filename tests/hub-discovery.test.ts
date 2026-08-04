@@ -66,7 +66,7 @@ test("accepts a private discovery file with a strict loopback URL", async (t) =>
 	assert.deepEqual(await readHubDiscovery(), discovery);
 });
 
-test("tightens a user-owned discovery directory before reading secrets", async (t) => {
+test("rejects an overbroad discovery directory without changing its permissions", async (t) => {
 	if (typeof process.getuid !== "function") {
 		t.skip("POSIX ownership and mode checks are unavailable");
 		return;
@@ -76,8 +76,9 @@ test("tightens a user-owned discovery directory before reading secrets", async (
 	const discovery = validDiscovery();
 	writeDiscovery(discoveryPath, discovery);
 
-	assert.deepEqual(await readHubDiscovery(), discovery);
-	assert.equal(lstatSync(directory).mode & 0o777, 0o700);
+	assert.equal(await readHubDiscovery(), undefined);
+	await assert.rejects(ensurePrivateDiscoveryDirectory(discoveryPath), /permits group or other access/i);
+	assert.equal(lstatSync(directory).mode & 0o777, 0o777);
 });
 
 test("rejects a symlink discovery directory", async (t) => {
@@ -108,7 +109,9 @@ test("rejects symlink, non-regular, and overbroad discovery files", async (t) =>
 
 	rmSync(discoveryPath, { recursive: true });
 	writeDiscovery(discoveryPath, validDiscovery(), 0o644);
-	assert.equal(await readHubDiscovery(), undefined);
+	if (typeof process.getuid === "function") {
+		assert.equal(await readHubDiscovery(), undefined);
+	}
 });
 
 test("rejects a discovery directory owned by another POSIX user", async (t) => {

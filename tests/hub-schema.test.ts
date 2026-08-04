@@ -91,6 +91,16 @@ test("projects render states onto the allowlisted detail wire schema", () => {
 
 test("projects decoded patches and rejects malformed declared fields", () => {
 	assert.deepEqual(projectRenderStatePatch({
+		reset: true,
+		snapshot: null,
+		timeline: null,
+	}), {
+		reset: true,
+		snapshot: null,
+		timeline: null,
+	});
+
+	assert.deepEqual(projectRenderStatePatch({
 		secret: "top-level-secret",
 		snapshot: {
 			createdAt: 20,

@@ -186,7 +186,10 @@ async function readJsonBody<T>(request: IncomingMessage, timeoutMs: number): Pro
 		for await (const chunk of request) {
 			const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
 			size += buffer.length;
-			if (size > MAX_REQUEST_BYTES) throw new Error("Request body too large");
+			if (size > MAX_REQUEST_BYTES) {
+				request.destroy();
+				throw new Error("Request body too large");
+			}
 			chunks.push(buffer);
 		}
 	} catch (error) {
@@ -196,6 +199,16 @@ async function readJsonBody<T>(request: IncomingMessage, timeoutMs: number): Pro
 		clearTimeout(timeout);
 	}
 	return JSON.parse(Buffer.concat(chunks).toString("utf8")) as T;
+}
+
+function htmlWithScriptNonce(html: string, nonce: string): string {
+	return html.replace(/<script\b([^>]*)>/gi, (_tag, attributes: string) => {
+		const normalized = attributes.replace(
+			/\snonce=(?:"[^"]*"|'[^']*'|[^\s>]+)/gi,
+			"",
+		);
+		return `<script nonce="${nonce}"${normalized}>`;
+	});
 }
 
 function defaultSource(): ContextRailSessionSource {
@@ -370,10 +383,7 @@ export async function startContextRailServer(
 		publishedAt: now(),
 		...(activeStreamId ? { activeStreamId } : {}),
 		sessions: sessionList(),
-		states: [...sessions.values()].map(({ streamId, state }) => ({
-			streamId,
-			state: structuredClone(state),
-		})),
+		states: [...sessions.values()].map(({ streamId, state }) => ({ streamId, state })),
 	});
 
 	const closeSseClient = (client: SseClient): void => {
@@ -550,17 +560,15 @@ export async function startContextRailServer(
 				changed = true;
 			}
 
-			const activeCount = [...sessions.values()].filter((session) => session.summary.active).length;
-			const inactiveLimit = Math.max(0, maxRetainedSessions - activeCount);
 			const retained = [...sessions.values()]
-				.filter((session) => !session.summary.active)
 				.sort(
 					(left, right) =>
+						Number(left.summary.active) - Number(right.summary.active) ||
 						left.summary.lastActivityAt - right.summary.lastActivityAt ||
 						left.summary.updatedAt - right.summary.updatedAt ||
 						left.streamId.localeCompare(right.streamId),
 				);
-			for (const session of retained.slice(0, Math.max(0, retained.length - inactiveLimit))) {
+			for (const session of retained.slice(0, Math.max(0, retained.length - maxRetainedSessions))) {
 				evict(session);
 				changed = true;
 			}
@@ -759,15 +767,16 @@ export async function startContextRailServer(
 			const requestUrl = new URL(request.url ?? "/", origin || "http://127.0.0.1");
 			const pathname = requestUrl.pathname;
 			if (request.method === "GET" && pathname === "/") {
+				const nonce = randomBytes(18).toString("base64");
 				response.writeHead(200, {
 					"Cache-Control": "no-store",
 					"Content-Security-Policy":
-						"default-src 'self'; connect-src 'self'; form-action 'none'; img-src 'self' data:; object-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+						`default-src 'self'; connect-src 'self'; form-action 'none'; img-src 'self' data:; object-src 'none'; script-src 'self' 'nonce-${nonce}'; style-src 'self' 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'`,
 					"Content-Type": "text/html; charset=utf-8",
 					"Referrer-Policy": "no-referrer",
 					"X-Content-Type-Options": "nosniff",
 				});
-				response.end(html);
+				response.end(htmlWithScriptNonce(html, nonce));
 				return;
 			}
 
@@ -836,6 +845,7 @@ export async function startContextRailServer(
 					if (!client.closed) clients.add(client);
 
 					const keepalive = setInterval(() => enqueueSse(client, ": keepalive\n\n"), 15_000);
+					keepalive.unref();
 					request.on("close", () => {
 						clearInterval(keepalive);
 						closeSseClient(client);

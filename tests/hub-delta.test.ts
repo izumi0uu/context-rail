@@ -287,6 +287,19 @@ test("returns one complete chunk for empty and under-budget patches", () => {
 	assert.deepEqual(decodeRenderStatePatchChunks(smallChunks), smallPatch);
 });
 
+test("rejects malformed transport chunks and undersized budgets", () => {
+	assert.throws(
+		() => decodeRenderStatePatchChunks([{ data: "not*base64" }]),
+		/invalid base64/,
+	);
+	assert.throws(
+		() => decodeRenderStatePatchChunks([{ data: Buffer.from("[]").toString("base64") }]),
+		/must be an object/,
+	);
+	assert.throws(() => decodeRenderStatePatchChunks([]), /no chunks/);
+	assert.throws(() => chunkRenderStatePatch({}, 3), RangeError);
+});
+
 test("drops unknown content fields while decoding transport chunks", () => {
 	const unsafePatch = {
 		secret: "top-level-secret",

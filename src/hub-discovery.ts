@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { constants, type Stats } from "node:fs";
-import { chmod, lstat, mkdir, open, rename, rm } from "node:fs/promises";
+import { lstat, mkdir, open, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import type { ContextRailHubDiscovery } from "./hub-types.ts";
@@ -72,20 +72,7 @@ async function secureDiscoveryDirectory(path: string, create: boolean): Promise<
 		throw new Error(`ContextRail discovery parent is not a directory: ${directory}`);
 	}
 
-	if (hasPosixIdentity()) {
-		const uid = process.getuid!();
-		if (stats.uid !== uid) {
-			throw new Error(`ContextRail discovery directory is not owned by the current user: ${directory}`);
-		}
-		if ((stats.mode & POSIX_SHARED_MODE_MASK) !== 0) {
-			await chmod(directory, 0o700);
-			stats = await lstat(directory);
-			if (stats.isSymbolicLink() || !stats.isDirectory()) {
-				throw new Error(`ContextRail discovery parent changed during validation: ${directory}`);
-			}
-		}
-		assertPrivateOwner(directory, stats, "directory");
-	}
+	assertPrivateOwner(directory, stats, "directory");
 	return true;
 }
 

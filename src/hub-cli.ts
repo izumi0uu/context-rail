@@ -193,7 +193,8 @@ async function waitForHubStop(
 			leaseIsFresh(lock) &&
 			oldOwnerProcessIsRunning;
 		if (!healthy && !oldOwnerIsActive) {
-			if (discovery?.instanceId === running.instanceId) {
+			const replacementOwnsLock = lock !== undefined && !lockBelongsToHub(lock, running);
+			if (discovery?.instanceId === running.instanceId && !replacementOwnsLock) {
 				await removeHubDiscovery(running.instanceId);
 			}
 			if (lock && lockBelongsToHub(lock, running)) {
@@ -207,8 +208,11 @@ async function waitForHubStop(
 				readLockSnapshot(),
 			]);
 			if (
-				remainingDiscovery?.instanceId !== running.instanceId &&
-				!lockBelongsToHub(remainingLock, running)
+				!lockBelongsToHub(remainingLock, running) &&
+				(
+					remainingDiscovery?.instanceId !== running.instanceId ||
+					remainingLock !== undefined
+				)
 			) {
 				return;
 			}
@@ -296,17 +300,39 @@ if (!lock) process.exit(0);
 const token = randomBytes(32).toString("base64url");
 const viewerToken = randomBytes(32).toString("base64url");
 let viewer: Awaited<ReturnType<typeof startContextRailServer>> | undefined;
+let cleanupPromise: Promise<void> | undefined;
 const cleanup = async (): Promise<void> => {
-	try {
-		await viewer?.stop();
-	} finally {
+	if (cleanupPromise) return cleanupPromise;
+	cleanupPromise = (async () => {
 		try {
-			await removeHubDiscovery(instanceId);
+			await viewer?.stop();
 		} finally {
-			await releaseLock(lock);
+			try {
+				const current = await readLockSnapshot();
+				if (
+					current?.lease?.ownerId === lock.lease.ownerId &&
+					current.lease.pid === lock.lease.pid
+				) {
+					await removeHubDiscovery(instanceId);
+				}
+			} finally {
+				await releaseLock(lock);
+			}
 		}
-	}
+	})();
+	return cleanupPromise;
 };
+let shutdownPromise: Promise<void> | undefined;
+const shutdown = (): Promise<void> => shutdownPromise ??= cleanup();
+const exitAfterShutdown = (): void => {
+	void shutdown()
+		.catch((error: unknown) => {
+			console.error(`ContextRail Hub shutdown failed: ${error instanceof Error ? error.message : String(error)}`);
+		})
+		.finally(() => process.exit(0));
+};
+process.once("SIGINT", exitAfterShutdown);
+process.once("SIGTERM", exitAfterShutdown);
 try {
 	viewer = await startContextRailServer({ instanceId, token, viewerToken });
 	await writeHubDiscovery({
@@ -323,13 +349,3 @@ try {
 	await cleanup();
 	throw error;
 }
-
-let shuttingDown = false;
-const shutdown = async (): Promise<void> => {
-	if (shuttingDown) return;
-	shuttingDown = true;
-	await cleanup();
-};
-
-process.once("SIGINT", () => void shutdown().then(() => process.exit(0)));
-process.once("SIGTERM", () => void shutdown().then(() => process.exit(0)));

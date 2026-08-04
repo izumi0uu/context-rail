@@ -395,7 +395,7 @@ test("does not remove a replacement installed after its first revalidation", asy
 	assert.equal(existsSync(discoveryPath), false);
 });
 
-test("an old owner cannot remove a replacement lease with the same PID", async (t) => {
+test("an old owner cannot remove discovery after its lease is replaced", async (t) => {
 	const directory = mkdtempSync(join(tmpdir(), "context-rail-replaced-lock-"));
 	const discoveryPath = join(directory, "hub.json");
 	const lockPath = `${discoveryPath}.lock`;
@@ -414,5 +414,27 @@ test("an old owner cannot remove a replacement lease with the same PID", async (
 	await waitForExit(hub);
 
 	assert.deepEqual(readLockLease(lockPath), replacement);
-	assert.equal(existsSync(discoveryPath), false);
+	assert.equal(existsSync(discoveryPath), true);
+});
+
+test("stop preserves discovery after a replacement owner takes the lease", async (t) => {
+	const directory = mkdtempSync(join(tmpdir(), "context-rail-stop-replaced-lock-"));
+	const discoveryPath = join(directory, "hub.json");
+	const lockPath = `${discoveryPath}.lock`;
+	const hub = startCli(discoveryPath);
+	t.after(async () => {
+		if (hub.exitCode === null && hub.signalCode === null) hub.kill("SIGTERM");
+		await waitForExit(hub);
+		rmSync(directory, { force: true, recursive: true });
+	});
+
+	const discovery = await waitForDiscovery(discoveryPath);
+	assert.ok(hub.pid);
+	rmSync(lockPath);
+	const replacement = writeLockLease(lockPath, hub.pid, "replacement-owner");
+	const stopped = await runCli(discoveryPath, "stop");
+
+	assert.equal(stopped.code, 0, stopped.stderr);
+	assert.deepEqual(readLockLease(lockPath), replacement);
+	assert.deepEqual(JSON.parse(readFileSync(discoveryPath, "utf8")), discovery);
 });

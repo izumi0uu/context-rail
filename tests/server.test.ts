@@ -275,6 +275,26 @@ test("serves a multi-session bootstrap and publishes authenticated updates", asy
 	assert.deepEqual(await health.json(), { ok: true, instanceId: "hub-test", clients: 0, sessions: 3 });
 });
 
+test("uses a distinct CSP nonce for every viewer response", async (t) => {
+	const viewer = await startContextRailServer({
+		html: '<!doctype html><script src="/assets/scene-core.js"></script><script>globalThis.ready = true;</script>',
+	});
+	t.after(() => viewer.stop());
+
+	const first = await fetch(viewer.url);
+	const second = await fetch(viewer.url);
+	const firstPolicy = first.headers.get("content-security-policy") ?? "";
+	const secondPolicy = second.headers.get("content-security-policy") ?? "";
+	const firstNonce = firstPolicy.match(/'nonce-([^']+)'/)?.[1];
+	const secondNonce = secondPolicy.match(/'nonce-([^']+)'/)?.[1];
+	assert.ok(firstNonce);
+	assert.ok(secondNonce);
+	assert.notEqual(firstNonce, secondNonce);
+	assert.doesNotMatch(firstPolicy, /script-src[^;]*'unsafe-inline'/);
+	assert.ok((await first.text()).includes(`<script nonce="${firstNonce}">`));
+	assert.ok((await second.text()).includes(`<script nonce="${secondNonce}">`));
+});
+
 test("starts and serves the DOM fallback when the optional Pixi asset is unavailable", async (t) => {
 	const assetReads: string[] = [];
 	const viewer = await startContextRailServer({
@@ -890,6 +910,35 @@ test("closes an incomplete authenticated request after the body deadline", { tim
 	assert.equal(socket.destroyed, true);
 });
 
+test("destroys an oversized request before the declared body finishes", { timeout: 1_000 }, async (t) => {
+	const viewer = await startContextRailServer({ html: "ok", token: "oversized-body-token" });
+	t.after(() => viewer.stop());
+	const socket = connect(viewer.port, "127.0.0.1");
+	t.after(() => socket.destroy());
+	await new Promise<void>((resolve, reject) => {
+		socket.once("connect", resolve);
+		socket.once("error", reject);
+	});
+	const closed = new Promise<void>((resolve) => socket.once("close", () => resolve()));
+	const declaredBytes = 4 * 1024 * 1024;
+	socket.write(
+		"POST /api/heartbeat HTTP/1.1\r\n"
+		+ "Host: 127.0.0.1\r\n"
+		+ "Authorization: Bearer oversized-body-token\r\n"
+		+ "Content-Type: application/json\r\n"
+		+ `Content-Length: ${declaredBytes}\r\n\r\n`,
+	);
+	socket.write(Buffer.alloc(2 * 1024 * 1024 + 1, 0x20));
+
+	await Promise.race([
+		closed,
+		new Promise<never>((_, reject) => {
+			setTimeout(() => reject(new Error("Oversized request stream remained open")), 300);
+		}),
+	]);
+	assert.equal(socket.destroyed, true);
+});
+
 test("disconnects an SSE client when one outbound event exceeds its queue budget", async (t) => {
 	const viewer = await startContextRailServer({
 		html: "ok",
@@ -960,7 +1009,7 @@ test("evicts disconnected sessions by count and retention TTL", async (t) => {
 	await waitFor(async () => (await health(viewer.url)).sessions === 0);
 });
 
-test("evicts old inactive sessions from a connected process while preserving every active session", async (t) => {
+test("hard-caps retained sessions even when every process has an active session", async (t) => {
 	let time = 30_000;
 	const viewer = await startContextRailServer({
 		html: "ok",
@@ -992,7 +1041,7 @@ test("evicts old inactive sessions from a connected process while preserving eve
 	viewer.publish(state("model-x", "message-x"), source("process-x", "session-x"));
 	time += 1;
 	viewer.publish(state("model-y", "message-y"), source("process-y", "session-y"));
-	assert.equal((await health(viewer.url)).sessions, 3);
+	assert.equal((await health(viewer.url)).sessions, 2);
 
 	stream = await fetch(eventsUrl(viewer));
 	assert.ok(stream.body);
@@ -1002,7 +1051,7 @@ test("evicts old inactive sessions from a connected process while preserving eve
 	await reader.cancel();
 	assert.deepEqual(
 		bootstrap.sessions.map(({ sessionId }) => sessionId),
-		["session-y", "session-x", "session-c"],
+		["session-y", "session-x"],
 	);
 	assert.ok(bootstrap.sessions.every(({ active }) => active));
 });
