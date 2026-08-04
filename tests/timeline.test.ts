@@ -89,6 +89,11 @@ test("retains details and replaces pending content with the authoritative contex
 
 	const outside = timeline.apply(snapshot([], 3), { details: new Map() });
 	assert.deepEqual(outside.history[0]?.detail, authoritativeDetail);
+
+	const cleared = timeline.apply(snapshot([{ id: "assistant-1", kind: "assistant" }], 4), {
+		details: new Map(),
+	});
+	assert.equal(cleared.history[0]?.detail, undefined);
 });
 
 test("adds a synthetic compaction summary and provenance without deleting sources", () => {

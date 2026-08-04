@@ -1,7 +1,7 @@
 {
   "name": "context-rail",
   "version": "0.1.0",
-  "description": "Live, read-only context window visualization for Oh My Pi",
+  "description": "Live, read-only context window visualization for Oh My Pi and Pi",
   "type": "module",
   "license": "MIT",
   "author": "izumi0uu",
@@ -13,6 +13,11 @@
   "bugs": {
     "url": "https://github.com/izumi0uu/context-rail/issues"
   },
+  "keywords": [
+    "pi-package",
+    "context-window",
+    "agent-observability"
+  ],
   "bin": {
     "context-rail": "./dist/hub-cli.js"
   },
@@ -27,11 +32,20 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./pi": {
+      "types": "./dist/pi.d.ts",
+      "import": "./dist/pi.js"
     }
   },
   "omp": {
     "extensions": [
       "./dist/index.js"
+    ]
+  },
+  "pi": {
+    "extensions": [
+      "./dist/pi.js"
     ]
   },
   "scripts": {
@@ -47,13 +61,13 @@
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
-	"engines": {
-		"node": ">=22.6.0"
-	},
+  "engines": {
+    "node": ">=22.6.0"
+  },
   "devDependencies": {
     "@types/node": "^26.1.2",
-	"esbuild": "0.28.1",
-	"pixi.js": "8.19.0",
-    "typescript": "^6.0.3"
+    "esbuild": "0.28.1",
+    "pixi.js": "8.19.0",
+    "typescript": "^7.0.2"
   }
 }

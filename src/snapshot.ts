@@ -26,6 +26,10 @@ export interface ContextItemDetail {
 	isError?: boolean;
 }
 
+export type ContextItemDetailFactory = (
+	message: ContextMessageLike,
+) => ContextItemDetail | undefined;
+
 export interface ContextMessageLike {
 	id?: unknown;
 	role?: unknown;
@@ -85,6 +89,7 @@ export interface CreateSnapshotOptions {
 
 export interface CaptureContextOptions extends CreateSnapshotOptions {
 	systemPrompt?: string | readonly string[];
+	createContextItemDetail?: ContextItemDetailFactory;
 }
 
 export interface ContextCapture {
@@ -308,14 +313,18 @@ function sourceRole(message: ContextMessageLike): string {
 	return typeof message.role === "string" && message.role ? message.role : "unknown";
 }
 
+function excludedExecution(message: ContextMessageLike): boolean {
+	return (
+		(message.role === "bashExecution" || message.role === "pythonExecution") &&
+		message.excludeFromContext === true
+	);
+}
+
 export function createContextItemDetail(
 	message: ContextMessageLike,
 ): ContextItemDetail | undefined {
 	const role = sourceRole(message);
-	if (
-		(role === "bashExecution" || role === "pythonExecution") &&
-		message.excludeFromContext === true
-	) return undefined;
+	if (excludedExecution(message)) return undefined;
 	if (role === "custom" || role === "hookMessage") return customMessageDetail(message);
 
 	let modelMessages: ContextDetailModelMessage[];
@@ -410,12 +419,7 @@ export function createContextItemDetail(
 }
 
 function visibleMessages(messages: readonly ContextMessageLike[]): ContextMessageLike[] {
-	return messages.filter(
-		(message) => !(
-			(message.role === "bashExecution" || message.role === "pythonExecution") &&
-			message.excludeFromContext === true
-		),
-	);
+	return messages.filter((message) => !excludedExecution(message));
 }
 
 function finiteNonNegative(value: number | null | undefined): number | undefined {
@@ -463,6 +467,7 @@ interface PreviousIdentity {
  * append, recreation, and compaction paths without inspecting message content.
  */
 export class ContextMessageIdentity {
+	private static readonly MAX_PROVISIONAL_IDENTITIES = 2_048;
 	private counter = 0;
 	private objectIds = new WeakMap<object, string>();
 	private previous: PreviousIdentity[] = [];
@@ -491,6 +496,12 @@ export class ContextMessageIdentity {
 			signature: messageSignature(message),
 			...(anchor ? { anchor } : {}),
 		});
+		if (this.provisional.length > ContextMessageIdentity.MAX_PROVISIONAL_IDENTITIES) {
+			this.provisional.splice(
+				0,
+				this.provisional.length - ContextMessageIdentity.MAX_PROVISIONAL_IDENTITIES,
+			);
+		}
 		return id;
 	}
 
@@ -517,11 +528,13 @@ export class ContextMessageIdentity {
 			claimed.add(candidate.id);
 		}
 
+		const sameLengthUnchanged =
+			messages.length === this.previous.length &&
+			signatures.every((signature, index) => signature === this.previous[index]?.signature);
 		let prefix = 0;
 		while (
 			(messages.length > this.previous.length ||
-				(messages.length === this.previous.length &&
-					signatures.every((signature, index) => signature === this.previous[index]?.signature))) &&
+				sameLengthUnchanged) &&
 			prefix < messages.length &&
 			prefix < this.previous.length &&
 			signatures[prefix] === this.previous[prefix]?.signature
@@ -637,7 +650,11 @@ export function createSnapshot(options: CreateSnapshotOptions): ContextSnapshot 
 }
 
 export function captureContext(options: CaptureContextOptions): ContextCapture {
-	const { systemPrompt, ...snapshotOptions } = options;
+	const {
+		systemPrompt,
+		createContextItemDetail: detailForMessage = createContextItemDetail,
+		...snapshotOptions
+	} = options;
 	const promptParts = Array.isArray(systemPrompt)
 		? [...systemPrompt]
 		: typeof systemPrompt === "string" && systemPrompt.length > 0
@@ -651,7 +668,7 @@ export function captureContext(options: CaptureContextOptions): ContextCapture {
 	});
 	const details = new Map<string, ContextItemDetail>();
 	let itemOffset = 0;
-	if (snapshot.items[0]?.kind === "system") {
+	if (snapshot.items[0]?.id === "system-prompt") {
 		details.set(snapshot.items[0].id, {
 			sourceRole: "system",
 			modelMessages: [{
@@ -662,7 +679,7 @@ export function captureContext(options: CaptureContextOptions): ContextCapture {
 		itemOffset = 1;
 	}
 	for (const [index, message] of messages.entries()) {
-		const detail = createContextItemDetail(message);
+		const detail = detailForMessage(message);
 		const item = snapshot.items[index + itemOffset];
 		if (detail && item) details.set(item.id, detail);
 	}

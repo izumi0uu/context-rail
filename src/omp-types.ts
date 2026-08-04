@@ -1,27 +1,10 @@
-import type { ContextMessageLike, ContextUsageLike } from "./snapshot.ts";
+import type { ContextRailHostContext, ContextRailHostUi } from "./host-types.ts";
+import type { ContextMessageLike } from "./snapshot.ts";
 
-export interface OmpUiContext {
-	setStatus(key: string, text: string | undefined): void;
-	setWidget(
-		key: string,
-		content: string[] | undefined,
-		options?: { placement?: "aboveEditor" | "belowEditor" },
-	): void;
-	notify(message: string, type?: "info" | "warning" | "error"): void;
-}
+export interface OmpUiContext extends ContextRailHostUi {}
 
-export interface OmpExtensionContext {
+export interface OmpExtensionContext extends ContextRailHostContext {
 	ui: OmpUiContext;
-	cwd?: string;
-	model?: { id?: string };
-	sessionManager?: {
-		getSessionId(): string;
-		getSessionFile(): string | undefined;
-		getSessionName?(): string | undefined;
-		getCwd?(): string;
-	};
-	getContextUsage(): ContextUsageLike | undefined;
-	getSystemPrompt(): string | string[];
 }
 
 export type OmpCompactionAction = "context-full" | "snapcompact" | "handoff" | "shake";

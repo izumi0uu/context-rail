@@ -100,10 +100,34 @@ test("captures allowlisted model-context details for supported OMP messages", ()
 		}],
 		isError: false,
 	});
-	assert.match(capture.details.get(capture.snapshot.items[4]!.id)?.modelMessages[0]?.blocks[0]?.text ?? "", /Ran `pwd`/);
-	assert.match(capture.details.get(capture.snapshot.items[6]!.id)?.modelMessages[0]?.blocks[0]?.text ?? "", /Branch facts/);
-	assert.match(capture.details.get(capture.snapshot.items[7]!.id)?.modelMessages[0]?.blocks[0]?.text ?? "", /Compact facts/);
+	const bashBlock = capture.details.get(capture.snapshot.items[4]!.id)?.modelMessages[0]?.blocks[0];
+	const branchBlock = capture.details.get(capture.snapshot.items[6]!.id)?.modelMessages[0]?.blocks[0];
+	const compactBlock = capture.details.get(capture.snapshot.items[7]!.id)?.modelMessages[0]?.blocks[0];
+	assert.match(bashBlock?.type === "text" ? bashBlock.text : "", /Ran `pwd`/);
+	assert.match(branchBlock?.type === "text" ? branchBlock.text : "", /Branch facts/);
+	assert.match(compactBlock?.type === "text" ? compactBlock.text : "", /Compact facts/);
 	assert.doesNotMatch(JSON.stringify(capture), /private-call|private-result|thinkingSignature|"private":true/);
+});
+
+test("aligns real leading system-message details without a synthetic prompt", () => {
+	const capture = captureContext({
+		systemPrompt: "",
+		messages: [
+			{ role: "system", content: "Provider system message" },
+			{ role: "user", content: "User message" },
+		],
+		now: 1,
+	});
+
+	assert.deepEqual(capture.snapshot.items.map((item) => item.kind), ["system", "user"]);
+	const systemDetail = capture.details.get(capture.snapshot.items[0]!.id);
+	const userDetail = capture.details.get(capture.snapshot.items[1]!.id);
+	assert.deepEqual(systemDetail?.modelMessages[0]?.blocks, [
+		{ type: "text", text: "Provider system message" },
+	]);
+	assert.deepEqual(userDetail?.modelMessages[0]?.blocks, [
+		{ type: "text", text: "User message" },
+	]);
 });
 
 test("mirrors OMP developer roles and image-bearing custom message splits", () => {
@@ -275,19 +299,35 @@ test("ignores invalid usage values", () => {
 test("uses intrinsic identifiers as private anchors for opaque stable ids", () => {
 	const identity = new ContextMessageIdentity();
 	const first = createSnapshot({
-		messages: [{ id: "turn-42", role: "assistant" }, { toolCallId: 19, role: "toolResult" }],
+		messages: [
+			{ id: "turn-42", role: "assistant" },
+			{ toolCallId: "private-tool-call-anchor-19", role: "toolResult" },
+		],
 		identity,
 		now: 1,
 	});
 	const recreated = createSnapshot({
-		messages: [{ id: "turn-42", role: "assistant" }, { toolCallId: 19, role: "toolResult" }],
+		messages: [
+			{ id: "turn-42", role: "assistant" },
+			{ toolCallId: "private-tool-call-anchor-19", role: "toolResult" },
+		],
 		identity,
 		now: 2,
 	});
 
 	assert.deepEqual(first.items.map((item) => item.id), ["message-local-1", "message-local-2"]);
 	assert.deepEqual(recreated.items.map((item) => item.id), first.items.map((item) => item.id));
-	assert.doesNotMatch(JSON.stringify(recreated), /turn-42|message-19/);
+	assert.doesNotMatch(JSON.stringify(recreated), /turn-42|private-tool-call-anchor-19/);
+});
+
+test("bounds unmatched provisional lifecycle identities", () => {
+	const identity = new ContextMessageIdentity();
+	for (let index = 0; index < 4_096; index += 1) {
+		createContextItem({ role: "assistant", timestamp: index }, identity);
+	}
+
+	const retained = (identity as unknown as { provisional: unknown[] }).provisional;
+	assert.ok(retained.length <= 2_048, `retained ${retained.length} provisional identities`);
 });
 
 test("reconciles lifecycle messages and context clones by timestamp", () => {

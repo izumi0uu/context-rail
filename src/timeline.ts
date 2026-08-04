@@ -43,6 +43,9 @@ function cloneDetail(detail: ContextItemDetail): ContextItemDetail {
 }
 
 function sameDetail(left: ContextItemDetail | undefined, right: ContextItemDetail): boolean {
+	if (!left) return false;
+	if (left.sourceRole !== right.sourceRole || left.isError !== right.isError) return false;
+	if (left.modelMessages.length !== right.modelMessages.length) return false;
 	return JSON.stringify(left) === JSON.stringify(right);
 }
 

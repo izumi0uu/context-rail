@@ -11,11 +11,16 @@ import type {
 import type { ContextRailSessionSource } from "../src/hub-types.ts";
 import type { RenderState } from "../src/render.ts";
 
-test("publishes the compiled extension entry for OMP", () => {
+test("publishes separate compiled extension entries for OMP and Pi", () => {
 	const packageJson = JSON.parse(
 		readFileSync(new URL("../package.json", import.meta.url), "utf8"),
-	) as { files?: unknown; omp?: { extensions?: unknown } };
+	) as {
+		files?: unknown;
+		omp?: { extensions?: unknown };
+		pi?: { extensions?: unknown };
+	};
 	assert.deepEqual(packageJson.omp?.extensions, ["./dist/index.js"]);
+	assert.deepEqual(packageJson.pi?.extensions, ["./dist/pi.js"]);
 	assert.ok(Array.isArray(packageJson.files) && packageJson.files.includes("dist"));
 });
 
