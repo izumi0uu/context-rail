@@ -283,6 +283,9 @@ function fourSideRingPosition(
 	maxRadiusX: number,
 	horizontalMaximum = 9,
 ): RingPosition {
+	if (!Number.isFinite(horizontalMaximum) || horizontalMaximum <= 0) {
+		throw new RangeError("horizontalMaximum must be greater than zero");
+	}
 	let ring = 0;
 	let offset = Math.max(0, index);
 	while (offset >= ringCapacity(ring, maxRadiusX, horizontalMaximum)) {
@@ -304,10 +307,21 @@ export function boundsForPoints(
 	}
 	const halfWidth = nodeWidth / 2;
 	const halfHeight = nodeHeight / 2;
-	const minX = Math.min(...points.map((point) => point.x - halfWidth)) - paddingX;
-	const maxX = Math.max(...points.map((point) => point.x + halfWidth)) + paddingX;
-	const minY = Math.min(...points.map((point) => point.y - halfHeight)) - paddingY;
-	const maxY = Math.max(...points.map((point) => point.y + halfHeight)) + paddingY;
+	let minX = points[0]!.x - halfWidth;
+	let maxX = points[0]!.x + halfWidth;
+	let minY = points[0]!.y - halfHeight;
+	let maxY = points[0]!.y + halfHeight;
+	for (let index = 1; index < points.length; index += 1) {
+		const point = points[index]!;
+		minX = Math.min(minX, point.x - halfWidth);
+		maxX = Math.max(maxX, point.x + halfWidth);
+		minY = Math.min(minY, point.y - halfHeight);
+		maxY = Math.max(maxY, point.y + halfHeight);
+	}
+	minX -= paddingX;
+	maxX += paddingX;
+	minY -= paddingY;
+	maxY += paddingY;
 	return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }
 
@@ -458,7 +472,8 @@ function freePointAlongRay(
 	}
 
 	let extreme = useX ? occupiedPoints[0]!.x : occupiedPoints[0]!.y;
-	for (const point of occupiedPoints.slice(1)) {
+	for (let index = 1; index < occupiedPoints.length; index += 1) {
+		const point = occupiedPoints[index]!;
 		const coordinate = useX ? point.x : point.y;
 		extreme = axisUnit > 0
 			? Math.max(extreme, coordinate)
@@ -599,9 +614,9 @@ export function buildSceneLayout(
 				id,
 				epoch: index,
 				home,
-				focus: home,
+				focus: { ...home },
 				historyFocus: { ...home },
-				pending: home,
+				pending: { ...home },
 				isHub,
 			});
 		}

@@ -228,6 +228,18 @@ export function cameraForScreenPoint(
 	scale: number,
 	viewportCenter: CameraPoint,
 ): CameraState {
+	if (
+		!Number.isFinite(worldPoint.x) ||
+		!Number.isFinite(worldPoint.y) ||
+		!Number.isFinite(screenPoint.x) ||
+		!Number.isFinite(screenPoint.y) ||
+		!Number.isFinite(scale) ||
+		scale <= 0 ||
+		!Number.isFinite(viewportCenter.x) ||
+		!Number.isFinite(viewportCenter.y)
+	) {
+		throw new RangeError("Camera anchoring requires finite coordinates and a positive scale");
+	}
 	return {
 		x: worldPoint.x - (screenPoint.x - viewportCenter.x) / scale,
 		y: worldPoint.y - (screenPoint.y - viewportCenter.y) / scale,

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import * as cameraEngine from "../web/src/camera.ts";
 import {
+	clampInteractiveScale,
 	cameraForScreenPoint,
 	cameraForPan,
 	constrainCameraToBounds,
@@ -9,23 +9,9 @@ import {
 	interactiveMinimumScale,
 	normalizeWheelDelta,
 	screenPointToWorld,
+	wheelZoomScale,
 	worldPointToScreen,
 } from "../web/src/camera.ts";
-
-type WheelZoomScale = (
-	currentScale: number,
-	normalizedDelta: number,
-	sensitivity: number,
-	minimumScale: number,
-	maximumScale: number,
-) => number;
-
-type ClampInteractiveScale = (
-	currentScale: number,
-	requestedScale: number,
-	minimumScale: number,
-	maximumScale: number,
-) => number;
 
 test("camera coordinates round-trip around the graph viewport center", () => {
 	const camera = { x: 2_860, y: 620, scale: 0.73 };
@@ -50,6 +36,26 @@ test("zooming around a cursor keeps its world point anchored", () => {
 	assert.ok(Math.abs(anchored.y - cursor.y) < 1e-9);
 });
 
+test("camera anchoring rejects every non-finite input and non-positive scale", () => {
+	const validPoint = { x: 10, y: 20 };
+	assert.throws(
+		() => cameraForScreenPoint({ x: Number.NaN, y: 20 }, validPoint, 1, validPoint),
+		/finite coordinates and a positive scale/,
+	);
+	assert.throws(
+		() => cameraForScreenPoint(validPoint, { x: 10, y: Number.POSITIVE_INFINITY }, 1, validPoint),
+		/finite coordinates and a positive scale/,
+	);
+	assert.throws(
+		() => cameraForScreenPoint(validPoint, validPoint, 0, validPoint),
+		/finite coordinates and a positive scale/,
+	);
+	assert.throws(
+		() => cameraForScreenPoint(validPoint, validPoint, 1, { x: Number.NEGATIVE_INFINITY, y: 20 }),
+		/finite coordinates and a positive scale/,
+	);
+});
+
 test("wheel deltas use one bounded pixel scale across trackpads, mice, and pages", () => {
 	assert.equal(normalizeWheelDelta(32, 0, 800), 32);
 	assert.equal(normalizeWheelDelta(3, 1, 800), 48);
@@ -65,10 +71,6 @@ test("interactive zoom cannot turn a readable fitted scene into subpixel dust", 
 });
 
 test("wheel-out never enlarges an epoch camera that starts below the natural-view floor", () => {
-	const wheelZoomScale = (cameraEngine as unknown as { wheelZoomScale?: WheelZoomScale }).wheelZoomScale;
-	assert.equal(typeof wheelZoomScale, "function", "camera core must expose deterministic wheel scale behavior");
-	if (!wheelZoomScale) return;
-
 	const epochScale = 0.1;
 	const naturalViewFloor = 0.25;
 	assert.equal(
@@ -84,16 +86,6 @@ test("wheel-out never enlarges an epoch camera that starts below the natural-vie
 });
 
 test("pinch-out never enlarges an epoch camera that starts below the natural-view floor", () => {
-	const clampInteractiveScale = (cameraEngine as unknown as {
-		clampInteractiveScale?: ClampInteractiveScale;
-	}).clampInteractiveScale;
-	assert.equal(
-		typeof clampInteractiveScale,
-		"function",
-		"camera core must expose shared monotonic scale bounds",
-	);
-	if (!clampInteractiveScale) return;
-
 	const epochScale = 0.1;
 	const naturalViewFloor = 0.25;
 	assert.equal(clampInteractiveScale(epochScale, 0.08, naturalViewFloor, 2.4), epochScale);

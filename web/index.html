@@ -117,8 +117,8 @@
 
 	  .node {
 	    position: absolute;
-	    width: 176px;
-	    height: 92px;
+	    width: var(--node-width);
+	    height: var(--node-height);
     border: 1.5px solid var(--node-color, var(--hair));
     border-radius: 8px;
     padding: 13px 14px 12px;
@@ -748,7 +748,6 @@
     #usage-wrap { grid-column: 1 / -1; }
     .stat { min-width: 0; text-align: left; }
     .stat:last-child { text-align: right; }
-    .node { width: 164px; }
     #detail-panel { width: 100vw; }
     #detail-header { padding: 18px 18px 15px; }
     .detail-meta-cell { padding: 12px 18px; }
@@ -773,7 +772,7 @@
     .stat { min-width: 72px; text-align: right; }
     .stat:last-child { text-align: right; }
     .stat span { margin-top: 3px; }
-    .node { height: 64px; padding: 9px 10px; }
+    .node { padding: 9px 10px; }
     .node::before { left: 10px; }
     .node-title { margin-top: 6px; font-size: 20px; }
     .node-detail { display: none; }
@@ -789,7 +788,7 @@
 </style>
 </head>
 <body data-phase="idle" data-mode="window">
-<div id="viewport" aria-label="Context graph canvas">
+<div id="viewport" role="tabpanel" aria-label="Context graph canvas">
   <div id="world">
     <svg id="edge-layer" width="100" height="100" aria-hidden="true">
       <rect id="window-frame" x="0" y="0" width="0" height="0" rx="8" hidden></rect>
@@ -872,8 +871,9 @@
 
 /* Interaction model adapted from graph-deck by Yohei Nakajima. */
 
+const EVENT_CAPABILITY_STORAGE_KEY = "context-rail-event-token";
 const eventCapabilityToken = (() => {
-	const storageKey = "context-rail-event-token";
+	const storageKey = EVENT_CAPABILITY_STORAGE_KEY;
 	const fragmentToken = new URLSearchParams(location.hash.slice(1)).get("token");
 	if (fragmentToken !== null) {
 		try {
@@ -1326,6 +1326,9 @@ function selectSession(streamId, manual = false) {
 function renderSessionTabs() {
   const existing = new Map([...sessionTabs.children].map((tab) => [tab.dataset.streamId, tab]));
   const wanted = new Set();
+  const keyboardStreamId = sessionSummaries.some((summary) => summary.streamId === selectedStreamId)
+    ? selectedStreamId
+    : sessionSummaries[0]?.streamId;
   for (const summary of sessionSummaries) {
     wanted.add(summary.streamId);
     let tab = existing.get(summary.streamId);
@@ -1334,6 +1337,7 @@ function renderSessionTabs() {
       tab.type = "button";
       tab.className = "session-tab";
       tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-controls", "viewport");
       tab.dataset.streamId = summary.streamId;
       const dot = document.createElement("i");
       dot.className = "session-dot";
@@ -1351,13 +1355,18 @@ function renderSessionTabs() {
     tab.dataset.connected = String(Boolean(summary.connected));
     tab.dataset.unread = String(unreadSessions.has(summary.streamId));
     tab.setAttribute("aria-selected", String(summary.streamId === selectedStreamId));
-    tab.tabIndex = summary.streamId === selectedStreamId ? 0 : -1;
+    tab.id = `session-tab-${encodeURIComponent(summary.streamId)}`;
+    tab.tabIndex = summary.streamId === keyboardStreamId ? 0 : -1;
     tab.title = `${summary.sessionLabel} - ${summary.processLabel}${summary.active ? " - active in OMP" : ""}${summary.connected ? "" : " - process offline"}`;
     sessionTabs.appendChild(tab);
   }
   for (const [streamId, tab] of existing) {
     if (!wanted.has(streamId)) tab.remove();
   }
+  const labelledTab = [...sessionTabs.children]
+    .find((tab) => tab.dataset.streamId === (selectedStreamId || keyboardStreamId));
+  if (labelledTab) viewport.setAttribute("aria-labelledby", labelledTab.id);
+  else viewport.removeAttribute("aria-labelledby");
 }
 
 function emptyTimeline() {
@@ -1565,15 +1574,19 @@ function nodeText(item, index) {
 }
 
 function nodeDimensions() {
-		  return {
+		  const dimensions = {
 			  width: isMobileLayout() ? NODE_WIDTH_MOBILE : NODE_WIDTH_DESKTOP,
 			  height: isShortLandscapeLayout() ? NODE_HEIGHT_SHORT_LANDSCAPE : NODE_HEIGHT,
 		  };
+		document.documentElement.style.setProperty("--node-width", `${dimensions.width}px`);
+		document.documentElement.style.setProperty("--node-height", `${dimensions.height}px`);
+		return dimensions;
 }
 
 function createNode(item, index, target, dimensions, revealAt = 0, start = null) {
 	  const element = document.createElement("div");
 	  element.className = "node";
+	  element.setAttribute("role", "button");
 
   const kind = document.createElement("span");
   kind.className = "node-kind";
@@ -1584,6 +1597,7 @@ function createNode(item, index, target, dimensions, revealAt = 0, start = null)
 	  element.append(kind, title, detail);
 
   const revealed = revealAt === 0;
+	element.tabIndex = revealed ? 0 : -1;
   const node = {
     key: itemKey(item), item, index, element, kind, title, detail,
     x: start?.x ?? target.x + (viewMode === "window" ? 180 : 0),
@@ -1797,6 +1811,7 @@ function revealNode(node) {
     node.element.dataset.revealedAt = String(Math.round(performance.now()));
   }
   node.element.removeAttribute("aria-hidden");
+  node.element.tabIndex = node.handoffToHistory ? -1 : 0;
   if (node.pendingDiff) flashDiff(node, node.pendingDiff);
   node.pendingDiff = null;
 }
@@ -1825,7 +1840,7 @@ function displayPoint(key, activeIds, pendingIds) {
 	return placement.historyFocus;
 }
 
-function syncHistoryScene(timeline, items, activeIds, pendingIds) {
+function syncHistoryScene(timeline, items, activeIds, pendingIds, dimensions) {
 	if (!historyRendererAvailable || !historyRenderer || !currentSceneLayout) return;
 	const dynamicIds = new Set([...activeIds, ...pendingIds, ...historyHandoffIds]);
 	const summaryTargets = new Set((timeline.summaryEdges || []).map((edge) => String(edge.to)));
@@ -1847,8 +1862,8 @@ function syncHistoryScene(timeline, items, activeIds, pendingIds) {
 			detail: text.detail,
 			x: point.x,
 			y: point.y,
-			width: nodeDimensions().width,
-			height: nodeDimensions().height,
+			width: dimensions.width,
+			height: dimensions.height,
 			color: numericColor(meta.color),
 			opacity: viewMode === "overview" ? (activeIds.has(key) ? 1 : 0.54) : 0.44,
 			summary: displayItem.summary,
@@ -1949,7 +1964,16 @@ function reconcileNodes(timeline, animateNew = false) {
 			if (point) pixiStartPoints.set(key, point);
 		}
 	}
-	currentSceneLayout = buildLayout(timeline, dimensions);
+	let nextSceneLayout;
+	try {
+		nextSceneLayout = buildLayout(timeline, dimensions);
+	} catch (error) {
+		document.body.dataset.layoutError = error instanceof Error ? error.message : String(error);
+		console.error("ContextRail layout failed", error);
+		return false;
+	}
+	delete document.body.dataset.layoutError;
+	currentSceneLayout = nextSceneLayout;
 	rebuildCameraContentBounds(currentSceneLayout, activeIds, pendingIds, dimensions);
 	restoredSceneEpoch = null;
 	if (viewedEpochIndex !== null) {
@@ -1995,13 +2019,13 @@ function reconcileNodes(timeline, animateNew = false) {
 	let createdNodes = 0;
 	items.forEach((item, index) => {
     const key = itemKey(item);
+	if (!domWanted.has(key)) return;
 	const active = activeIds.has(key);
 	const pending = pendingIds.has(key);
 	const displayItem = { ...item, active, pending, summary: Boolean(item.synthetic) || summaryTargets.has(key) };
 	const placement = currentSceneLayout.placements.get(key);
 	if (!placement) return;
 	const target = nodeLayout(placement, active, pending);
-	if (!domWanted.has(key)) return;
     let node = nodes.get(key);
     const created = !node;
 	    if (!node) {
@@ -2038,6 +2062,7 @@ function reconcileNodes(timeline, animateNew = false) {
 		node.pendingX = target.pendingX;
 		node.pendingY = target.pendingY;
 		node.handoffToHistory = historyHandoffIds.has(key);
+		node.element.tabIndex = node.revealed && !node.handoffToHistory ? 0 : -1;
 		if (node.width !== dimensions.width || node.height !== dimensions.height) {
 			node.width = dimensions.width;
 			node.height = dimensions.height;
@@ -2098,6 +2123,7 @@ function reconcileNodes(timeline, animateNew = false) {
 		node.targetY += 34;
 	}
     node.element.setAttribute("aria-hidden", "true");
+    node.element.tabIndex = -1;
     markNodeMoving(node);
     node.removeTimer = setTimeout(() => {
       movingNodes.delete(node);
@@ -2110,12 +2136,13 @@ function reconcileNodes(timeline, animateNew = false) {
 		for (const edge of edges.values()) edge.path.remove();
 		edges.clear();
 		dirtyEdges.clear();
-		syncHistoryScene(timeline, items, activeIds, pendingIds);
+		syncHistoryScene(timeline, items, activeIds, pendingIds, dimensions);
 	} else {
 		reconcileEdges(timeline, items, activeIds);
 	}
 	updateBounds(currentSceneLayout, previousSceneEpoch, items.length > 0);
 	lastAnimatedRevision = timeline.revision;
+	return true;
 }
 
 function reconcileEdges(timeline, items, activeIds) {
@@ -2532,6 +2559,12 @@ function attachNodeInteraction(node) {
   };
   node.element.addEventListener("pointerup", () => release(true));
   node.element.addEventListener("pointercancel", () => release(false));
+  node.element.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    if (node.element.tabIndex < 0 || node.removeTimer || node.handoffToHistory) return;
+    event.preventDefault();
+    openDetail(node);
+  });
   node.element.addEventListener("pointerenter", () => showTooltip(node));
   node.element.addEventListener("pointerleave", hideTooltip);
 }
@@ -2755,7 +2788,7 @@ function travelToEpoch(epochIndex) {
 	if (!currentSceneLayout) return false;
 	const boundedIndex = Math.max(0, Math.min(currentSceneLayout.currentEpoch, epochIndex));
 	const epoch = currentSceneLayout.epochs[boundedIndex];
-	if (!epoch) return;
+	if (!epoch) return false;
 	viewedEpochIndex = boundedIndex;
 	freeCamera = true;
 	cameraTarget = {
@@ -2903,7 +2936,6 @@ viewport.addEventListener("pointermove", (event) => {
 		else if (hoveredNode?.history) hideTooltip();
 		return;
 	}
-  if (!touches.has(event.pointerId)) return;
   touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
   if (pinch && touches.size >= 2) {
     freeCamera = true;
@@ -3022,11 +3054,12 @@ function applyPayload(payload, animateNew = false, force = false) {
 		|| historyRendererState !== lastReconciledRendererState
 		|| dimensionsKey !== lastReconciledDimensions;
 	if (needsReconcile) {
-		reconcileNodes(timeline, animateNew);
-		lastReconciledTimeline = timeline;
-		lastReconciledMode = viewMode;
-		lastReconciledRendererState = historyRendererState;
-		lastReconciledDimensions = dimensionsKey;
+		if (reconcileNodes(timeline, animateNew)) {
+			lastReconciledTimeline = timeline;
+			lastReconciledMode = viewMode;
+			lastReconciledRendererState = historyRendererState;
+			lastReconciledDimensions = dimensionsKey;
+		}
 	}
 	if (detailSelection) syncDetailPanel();
 }
@@ -3046,7 +3079,7 @@ followToggle.addEventListener("change", () => setFollowActive(followToggle.check
 sessionTabs.addEventListener("keydown", (event) => {
   if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
   const tabs = [...sessionTabs.querySelectorAll(".session-tab")];
-  const index = tabs.findIndex((tab) => tab.dataset.streamId === selectedStreamId);
+  const index = tabs.indexOf(document.activeElement);
   if (index < 0 || tabs.length < 2) return;
   event.preventDefault();
   const offset = event.key === "ArrowRight" ? 1 : -1;
@@ -3199,7 +3232,15 @@ function connectEventSource() {
 		handleEventSourceMessage(source, event, applyLegacySnapshot);
 	});
 	source.addEventListener("error", () => {
-		if (eventSource === source) setConnection("offline", "reconnecting");
+		if (eventSource !== source) return;
+		if (source.readyState === EventSource.CLOSED) {
+			source.close();
+			eventSource = null;
+			try { sessionStorage.removeItem(EVENT_CAPABILITY_STORAGE_KEY); } catch (_) {}
+			setConnection("offline", "unauthorized - reopen the viewer link");
+			return;
+		}
+		setConnection("offline", "reconnecting");
 	});
 }
 

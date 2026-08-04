@@ -67,12 +67,28 @@ export interface HistoryRendererDiagnostics {
 	lod: "overview" | "cards" | "detail";
 }
 
+interface VisibleBounds {
+	left: number;
+	right: number;
+	top: number;
+	bottom: number;
+}
+
+interface LabelCacheEntry {
+	container: Container;
+	kind: string;
+	title: string;
+	detail: string;
+	color: number;
+}
+
 const DETAIL_LOD_SCALE = 0.48;
 const CARD_LOD_SCALE = 0.16;
 const OVERVIEW_SILHOUETTE_SIZE_PX = 10;
 const OVERVIEW_CLUSTER_CELL_PX = 18;
 const OVERVIEW_CLUSTER_MAX_SCALE = 0.06;
 const MAX_LABELS = 220;
+const MAX_CACHED_LABELS = MAX_LABELS * 2;
 const MAX_SCENE_TRANSITIONS = 720;
 const DEFAULT_SCENE_TRANSITION_MS = 260;
 const GRID_SIZE = 256;
@@ -80,6 +96,54 @@ const CULL_SIGNATURE_SCREEN_STEP = 128;
 const MAX_INDEX_CELLS_PER_NODE = 64;
 const HISTORY_EDGE_COLOR = 0xc7cbc4;
 const SUMMARY_EDGE_COLOR = 0x4e8a35;
+
+export function historyLodForScale(scale: number): HistoryRendererDiagnostics["lod"] {
+	if (scale < CARD_LOD_SCALE) return "overview";
+	if (scale < DETAIL_LOD_SCALE) return "cards";
+	return "detail";
+}
+
+function clippedEdgeForBounds(
+	from: { x: number; y: number },
+	to: { x: number; y: number },
+	bounds: VisibleBounds,
+): { from: { x: number; y: number }; to: { x: number; y: number } } | null {
+	if (![from.x, from.y, to.x, to.y].every(Number.isFinite)) return null;
+	let minimum = 0;
+	let maximum = 1;
+	const dx = to.x - from.x;
+	const dy = to.y - from.y;
+	const clip = (direction: number, distance: number): boolean => {
+		if (direction === 0) return distance >= 0;
+		const ratio = distance / direction;
+		if (direction < 0) {
+			if (ratio > maximum) return false;
+			minimum = Math.max(minimum, ratio);
+		} else {
+			if (ratio < minimum) return false;
+			maximum = Math.min(maximum, ratio);
+		}
+		return true;
+	};
+	const intersects = clip(-dx, from.x - bounds.left)
+		&& clip(dx, bounds.right - from.x)
+		&& clip(-dy, from.y - bounds.top)
+		&& clip(dy, bounds.bottom - from.y)
+		&& minimum <= maximum;
+	if (!intersects) return null;
+	return {
+		from: { x: from.x + dx * minimum, y: from.y + dy * minimum },
+		to: { x: from.x + dx * maximum, y: from.y + dy * maximum },
+	};
+}
+
+export function edgeIntersectsBounds(
+	from: { x: number; y: number },
+	to: { x: number; y: number },
+	bounds: VisibleBounds,
+): boolean {
+	return clippedEdgeForBounds(from, to, bounds) !== null;
+}
 
 function clampText(value: string, maximum: number): string {
 	if (value.length <= maximum) return value;
@@ -132,12 +196,29 @@ function drawEdge(
 	edge: HistoryEdgeVisual,
 	nodes: Map<string, HistoryNodeVisual>,
 	offsets: Map<string, { x: number; y: number }>,
+	bounds: VisibleBounds,
 ): boolean {
 	const points = edgeEndpoints(edge, nodes, offsets);
 	if (!points) return false;
+	const middleX = (points.from.x + points.to.x) / 2;
+	const middleY = (points.from.y + points.to.y) / 2;
+	const curve = ((edge.from.length + edge.to.length) % 2 === 0 ? -1 : 1) * 18;
+	const control = { x: middleX, y: middleY + curve };
+	const clippedStraight = clippedEdgeForBounds(points.from, points.to, bounds);
+	if (
+		!clippedStraight
+		&& (
+			edge.type !== "sequence"
+			|| (
+				!edgeIntersectsBounds(points.from, control, bounds)
+				&& !edgeIntersectsBounds(control, points.to, bounds)
+			)
+		)
+	) return false;
 	const summary = edge.type !== "sequence";
 	if (summary) {
-		drawDashedLine(graphics, points.from, points.to, edge.type === "bundle" ? 18 : 11, 9);
+		if (!clippedStraight) return false;
+		drawDashedLine(graphics, clippedStraight.from, clippedStraight.to, edge.type === "bundle" ? 18 : 11, 9);
 		graphics.stroke({
 			color: SUMMARY_EDGE_COLOR,
 			alpha: edge.opacity,
@@ -145,9 +226,6 @@ function drawEdge(
 		});
 		return true;
 	}
-	const middleX = (points.from.x + points.to.x) / 2;
-	const middleY = (points.from.y + points.to.y) / 2;
-	const curve = ((edge.from.length + edge.to.length) % 2 === 0 ? -1 : 1) * 18;
 	graphics
 		.moveTo(points.from.x, points.from.y)
 		.quadraticCurveTo(middleX, middleY + curve, points.to.x, points.to.y)
@@ -257,12 +335,14 @@ export async function createHistoryRenderer(
 	let contextRestores = 0;
 	let destroyed = false;
 	let frames = 0;
+	let cardCount = 0;
 	let visibleCardCount = 0;
 	let clusterCount = 0;
 	let labelCount = 0;
 	let staticEdgeCount = 0;
 	let dynamicEdgeCount = 0;
 	let cullSignature = "";
+	let edgeCullSignature = "";
 	let lod: HistoryRendererDiagnostics["lod"] = "detail";
 	const offsets = new Map<string, { x: number; y: number }>();
 	const sceneTransitionIds = new Set<string>();
@@ -273,7 +353,7 @@ export async function createHistoryRenderer(
 	const incidentEdges = new Map<string, Set<HistoryEdgeVisual>>();
 	const staticSceneEdges: HistoryEdgeVisual[] = [];
 	const dynamicSceneEdges: HistoryEdgeVisual[] = [];
-	const displacedLabelCache = new Map<string, Container>();
+	const labelCache = new Map<string, LabelCacheEntry>();
 	let visibleNodeIds = new Set<string>();
 	const rendererGl = "gl" in app.renderer
 		? (app.renderer as typeof app.renderer & { gl: WebGLRenderingContext | WebGL2RenderingContext }).gl
@@ -284,7 +364,7 @@ export async function createHistoryRenderer(
 		? "webgl2"
 		: "webgl1";
 
-	const visibleBounds = (): { left: number; right: number; top: number; bottom: number } => {
+	const visibleBounds = (): VisibleBounds => {
 		const margin = 260 / Math.max(camera.scale, 0.01);
 		const halfWidth = camera.viewportWidth / 2 / camera.scale;
 		const halfHeight = camera.viewportHeight / 2 / camera.scale;
@@ -313,8 +393,58 @@ export async function createHistoryRenderer(
 		return scene.nodes.filter((node) => nodeIsVisible(node, bounds));
 	};
 
-	const clearLabels = (container: Container): void => {
-		for (const child of container.removeChildren()) child.destroy({ children: true });
+	const detachLabels = (container: Container): void => {
+		container.removeChildren();
+	};
+
+	const labelMatchesNode = (entry: LabelCacheEntry, node: HistoryNodeVisual): boolean => {
+		return entry.kind === node.kind
+			&& entry.title === node.title
+			&& entry.detail === node.detail
+			&& entry.color === node.color;
+	};
+
+	const destroyCachedLabel = (id: string): void => {
+		const entry = labelCache.get(id);
+		if (!entry) return;
+		entry.container.removeFromParent();
+		entry.container.destroy({ children: true });
+		labelCache.delete(id);
+	};
+
+	const cachedLabelFor = (node: HistoryNodeVisual): Container => {
+		const cached = labelCache.get(node.id);
+		if (cached && labelMatchesNode(cached, node)) {
+			labelCache.delete(node.id);
+			labelCache.set(node.id, cached);
+			return cached.container;
+		}
+		if (cached) destroyCachedLabel(node.id);
+		const container = labelFor(node);
+		labelCache.set(node.id, {
+			container,
+			kind: node.kind,
+			title: node.title,
+			detail: node.detail,
+			color: node.color,
+		});
+		while (labelCache.size > MAX_CACHED_LABELS) {
+			const oldestId = labelCache.keys().next().value;
+			if (oldestId === undefined) break;
+			destroyCachedLabel(oldestId);
+		}
+		return container;
+	};
+
+	const pruneLabelCache = (): void => {
+		for (const [id, entry] of labelCache) {
+			const node = nodeMap.get(id);
+			if (!node?.drawCard || !labelMatchesNode(entry, node)) destroyCachedLabel(id);
+		}
+	};
+
+	const clearLabelCache = (): void => {
+		for (const id of [...labelCache.keys()]) destroyCachedLabel(id);
 	};
 
 	const drawCardShape = (graphics: Graphics, node: HistoryNodeVisual): { left: number; top: number } => {
@@ -338,11 +468,11 @@ export async function createHistoryRenderer(
 		showLabels: boolean,
 	): void => {
 		graphics.clear();
-		clearLabels(container);
+		detachLabels(container);
 		for (const node of nodes) {
 			const { left, top } = drawCardShape(graphics, node);
 			if (!showLabels) continue;
-			const label = labelFor(node);
+			const label = cachedLabelFor(node);
 			label.position.set(left, top);
 			label.alpha = Math.max(0.5, node.opacity);
 			container.addChild(label);
@@ -417,11 +547,7 @@ export async function createHistoryRenderer(
 		for (const node of visible) {
 			const { left, top } = drawCardShape(displacedCards, node);
 			if (!showLabels) continue;
-			let label = displacedLabelCache.get(node.id);
-			if (!label) {
-				label = labelFor(node);
-				displacedLabelCache.set(node.id, label);
-			}
+			const label = cachedLabelFor(node);
 			label.position.set(left, top);
 			label.alpha = Math.max(0.5, node.opacity);
 			displacedLabels.addChild(label);
@@ -429,76 +555,59 @@ export async function createHistoryRenderer(
 		updateLabelCount();
 	};
 
-	const destroyDisplacedLabel = (id: string): void => {
-		const label = displacedLabelCache.get(id);
-		if (!label) return;
-		label.removeFromParent();
-		label.destroy({ children: true });
-		displacedLabelCache.delete(id);
-	};
-
-	const clearDisplacedLabelCache = (): void => {
-		for (const id of [...displacedLabelCache.keys()]) destroyDisplacedLabel(id);
+	const usesOverviewClusters = (scale: number): boolean => {
+		return historyLodForScale(scale) === "overview" && scale <= OVERVIEW_CLUSTER_MAX_SCALE;
 	};
 
 	const drawCards = (): void => {
 		const visible = visibleNodes();
 		visibleNodeIds = new Set(visible.map((node) => node.id));
 		visibleCardCount = visibleNodeIds.size;
-		lod = camera.scale < CARD_LOD_SCALE
-			? "overview"
-			: camera.scale < DETAIL_LOD_SCALE
-				? "cards"
-				: "detail";
+		lod = historyLodForScale(camera.scale);
 		const showLabels = lod === "detail" && visibleCardCount <= MAX_LABELS;
-		const useOverviewClusters = lod === "overview" && camera.scale <= OVERVIEW_CLUSTER_MAX_SCALE;
-		if (lod === "overview") {
-			if (useOverviewClusters) {
-				cards.clear();
-				clearLabels(labels);
-				displacedCards.clear();
-				displacedLabels.removeChildren();
-				updateLabelCount();
-				drawOverviewClusters(scene.nodes);
-			} else {
-				drawCardVisuals(cards, labels, visible.filter((node) => !offsets.has(node.id)), showLabels);
-				drawDisplacedCards();
-				overviewClusters.clear();
-				clusterCount = 0;
-			}
-		} else {
-			drawCardVisuals(cards, labels, visible.filter((node) => !offsets.has(node.id)), showLabels);
-			drawDisplacedCards();
-			overviewClusters.clear();
-			clusterCount = 0;
+		if (usesOverviewClusters(camera.scale)) {
+			cards.clear();
+			detachLabels(labels);
+			displacedCards.clear();
+			detachLabels(displacedLabels);
+			updateLabelCount();
+			drawOverviewClusters(scene.nodes);
+			return;
 		}
+		drawCardVisuals(cards, labels, visible.filter((node) => !offsets.has(node.id)), showLabels);
+		drawDisplacedCards();
+		overviewClusters.clear();
+		clusterCount = 0;
 	};
 
 	const edgeIsDisplaced = (edge: HistoryEdgeVisual): boolean => offsets.has(edge.from) || offsets.has(edge.to);
 
 	const drawStaticEdges = (): void => {
 		staticEdges.clear();
+		const bounds = visibleBounds();
 		for (const edge of staticSceneEdges) {
 			if (edgeIsDisplaced(edge)) continue;
-			drawEdge(staticEdges, edge, nodeMap, offsets);
+			drawEdge(staticEdges, edge, nodeMap, offsets, bounds);
 		}
 	};
 
 	const drawDynamicEdges = (): void => {
 		dynamicEdges.clear();
+		const bounds = visibleBounds();
 		for (const edge of dynamicSceneEdges) {
 			if (edgeIsDisplaced(edge)) continue;
-			drawEdge(dynamicEdges, edge, nodeMap, offsets);
+			drawEdge(dynamicEdges, edge, nodeMap, offsets, bounds);
 		}
 	};
 
 	const drawDisplacedEdges = (): void => {
 		displacedEdges.clear();
+		const bounds = visibleBounds();
 		const edges = new Set<HistoryEdgeVisual>();
 		for (const id of offsets.keys()) {
 			for (const edge of incidentEdges.get(id) || []) edges.add(edge);
 		}
-		for (const edge of edges) drawEdge(displacedEdges, edge, nodeMap, offsets);
+		for (const edge of edges) drawEdge(displacedEdges, edge, nodeMap, offsets, bounds);
 	};
 
 	const removeNodeFromSpatialIndex = (id: string): void => {
@@ -575,8 +684,8 @@ export async function createHistoryRenderer(
 
 	const refreshCulling = (): void => {
 		const bounds = visibleBounds();
-		const nextLod = camera.scale < CARD_LOD_SCALE ? "overview" : camera.scale < DETAIL_LOD_SCALE ? "cards" : "detail";
-		const nextSignature = nextLod === "overview" && camera.scale <= OVERVIEW_CLUSTER_MAX_SCALE
+		const nextLod = historyLodForScale(camera.scale);
+		const nextSignature = usesOverviewClusters(camera.scale)
 			? `clusters:${scene.nodes.length}:${Math.round(Math.log(camera.scale) * 40)}`
 			: [
 				nextLod,
@@ -585,32 +694,44 @@ export async function createHistoryRenderer(
 				Math.floor(bounds.top * camera.scale / CULL_SIGNATURE_SCREEN_STEP),
 				Math.floor(bounds.bottom * camera.scale / CULL_SIGNATURE_SCREEN_STEP),
 			].join(":");
-		if (nextSignature === cullSignature) return;
-		cullSignature = nextSignature;
-		drawCards();
+		if (nextSignature !== cullSignature) {
+			cullSignature = nextSignature;
+			drawCards();
+		}
+		const nextEdgeSignature = [
+			Math.floor(bounds.left * camera.scale / CULL_SIGNATURE_SCREEN_STEP),
+			Math.floor(bounds.right * camera.scale / CULL_SIGNATURE_SCREEN_STEP),
+			Math.floor(bounds.top * camera.scale / CULL_SIGNATURE_SCREEN_STEP),
+			Math.floor(bounds.bottom * camera.scale / CULL_SIGNATURE_SCREEN_STEP),
+		].join(":");
+		if (nextEdgeSignature === edgeCullSignature) return;
+		edgeCullSignature = nextEdgeSignature;
+		drawStaticEdges();
+		drawDynamicEdges();
+		drawDisplacedEdges();
+	};
+
+	const clearSceneTransitionState = (): string[] => {
+		const ids = [...sceneTransitionIds];
+		for (const id of ids) offsets.delete(id);
+		sceneTransitionIds.clear();
+		sceneTransitionFrame = null;
+		return ids;
 	};
 
 	const stopSceneTransition = (): void => {
 		if (sceneTransitionFrame !== null) cancelAnimationFrame(sceneTransitionFrame);
-		sceneTransitionFrame = null;
-		for (const id of sceneTransitionIds) offsets.delete(id);
-		sceneTransitionIds.clear();
+		clearSceneTransitionState();
 	};
 
 	const finishSceneTransition = (): void => {
-		for (const id of sceneTransitionIds) {
-			offsets.delete(id);
+		for (const id of clearSceneTransitionState()) {
 			const node = nodeMap.get(id);
 			if (node) updateNodeInSpatialIndex(node);
-			destroyDisplacedLabel(id);
 		}
-		sceneTransitionIds.clear();
-		sceneTransitionFrame = null;
 		cullSignature = "";
-		drawCards();
-		drawStaticEdges();
-		drawDynamicEdges();
-		drawDisplacedEdges();
+		edgeCullSignature = "";
+		refreshCulling();
 		render();
 	};
 
@@ -644,8 +765,13 @@ export async function createHistoryRenderer(
 				}
 				sceneTransitionFrame = requestAnimationFrame(tick);
 			} catch (error) {
-				sceneTransitionFrame = null;
-				callbacks.onError?.(error);
+				let reportedError = error;
+				try {
+					finishSceneTransition();
+				} catch (cleanupError) {
+					reportedError = new AggregateError([error, cleanupError], "Scene transition cleanup failed");
+				}
+				callbacks.onError?.(reportedError);
 			}
 		};
 		sceneTransitionFrame = requestAnimationFrame(tick);
@@ -662,7 +788,7 @@ export async function createHistoryRenderer(
 			const previous = offsets.get(id);
 			if (previous?.x === point.x && previous.y === point.y) continue;
 			addedOffset ||= !previous;
-			offsets.set(id, point);
+			offsets.set(id, { x: point.x, y: point.y });
 			updateNodeInSpatialIndex(node);
 			changed = true;
 		}
@@ -692,9 +818,7 @@ export async function createHistoryRenderer(
 			contextLost = false;
 			contextRestores += 1;
 			cullSignature = "";
-			drawStaticEdges();
-			drawDynamicEdges();
-			drawDisplacedEdges();
+			edgeCullSignature = "";
 			refreshCulling();
 			render();
 			callbacks.onContextRestored?.();
@@ -715,12 +839,14 @@ export async function createHistoryRenderer(
 				[...nodeMap].map(([id, node]) => [id, node.drawCard]),
 			);
 			stopSceneTransition();
-			clearDisplacedLabelCache();
 			for (const id of [...offsets.keys()]) {
 				if (!previousDrawCard.get(id)) offsets.delete(id);
 			}
 			scene = nextScene;
 			nodeMap = new Map(scene.nodes.map((node) => [node.id, node]));
+			cardCount = 0;
+			for (const node of scene.nodes) cardCount += Number(node.drawCard);
+			pruneLabelCache();
 			nodeOrder.clear();
 			scene.nodes.forEach((node, index) => nodeOrder.set(node.id, index));
 			for (const id of [...offsets.keys()]) {
@@ -765,11 +891,9 @@ export async function createHistoryRenderer(
 				}
 			}
 			cullSignature = "";
+			edgeCullSignature = "";
 			rebuildSpatialIndex();
 			rebuildEdgeIndex();
-			drawStaticEdges();
-			drawDynamicEdges();
-			drawDisplacedEdges();
 			refreshCulling();
 			render();
 			startSceneTransition(
@@ -835,6 +959,7 @@ export async function createHistoryRenderer(
 			if (!node || node.drawCard === drawCard) return;
 			removeNodeFromSpatialIndex(id);
 			node.drawCard = drawCard;
+			cardCount += drawCard ? 1 : -1;
 			if (drawCard) addNodeToSpatialIndex(node);
 			cullSignature = "";
 			drawCards();
@@ -860,7 +985,6 @@ export async function createHistoryRenderer(
 			const node = nodeMap.get(id);
 			sceneTransitionIds.delete(id);
 			if (!offsets.delete(id)) return;
-			destroyDisplacedLabel(id);
 			if (node) updateNodeInSpatialIndex(node);
 			drawCards();
 			drawStaticEdges();
@@ -902,6 +1026,7 @@ export async function createHistoryRenderer(
 			camera = { ...camera, viewportWidth, viewportHeight };
 			app.renderer.resize(viewportWidth, viewportHeight);
 			cullSignature = "";
+			edgeCullSignature = "";
 			refreshCulling();
 			render();
 		},
@@ -913,7 +1038,7 @@ export async function createHistoryRenderer(
 				contextRestores,
 				destroyed,
 				frames,
-				cardCount: scene.nodes.filter((node) => node.drawCard).length,
+				cardCount,
 					visibleCardCount,
 					transitioningCardCount: sceneTransitionIds.size,
 				labelCount,
@@ -931,7 +1056,7 @@ export async function createHistoryRenderer(
 			sceneTransitionIds.clear();
 			canvas.removeEventListener("webglcontextlost", handleContextLost);
 			canvas.removeEventListener("webglcontextrestored", handleContextRestored);
-			clearDisplacedLabelCache();
+			clearLabelCache();
 			offsets.clear();
 			spatialIndex.clear();
 			indexedCells.clear();

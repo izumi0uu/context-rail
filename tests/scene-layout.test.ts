@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+	boundsForPoints,
 	buildSceneLayout,
 	epochAnchor,
 	fourSidePosition,
@@ -219,7 +220,7 @@ test("appending to a later epoch preserves existing homes and only places new ca
 	assertHomesDoNotOverlap(appended);
 });
 
-test("randomized sequential appends preserve homes across 10k cards and many compactions", () => {
+test("randomized sequential appends preserve homes across 10k cards and many compactions", { timeout: 15_000 }, () => {
 	const complete = largeCompactedTimeline(10_000);
 	const summaryOrder = new Map(complete.history.map(({ id }, index) => [id, index]));
 	let randomState = 0x9e3779b9;
@@ -249,6 +250,35 @@ test("randomized sequential appends preserve homes across 10k cards and many com
 	assert.equal(previous.placements.size, 10_000);
 	assert.ok(previous.currentEpoch > 100, "fixture must include many compaction epochs");
 	assertHomesDoNotOverlap(previous);
+});
+
+test("bounds handle a large point set without spreading it onto the call stack", () => {
+	const points = Array.from({ length: 200_000 }, (_, index) => ({
+		x: index - 100_000,
+		y: 100_000 - index * 2,
+	}));
+	assert.deepEqual(boundsForPoints(points, 20, 10, 0, 0), {
+		x: -100_010,
+		y: -300_003,
+		width: 200_019,
+		height: 400_008,
+	});
+});
+
+test("placement modes never alias the permanent home point", () => {
+	const [item] = history(1);
+	assert.ok(item);
+	const result = layout({ history: [item] });
+	const placement = result.placements.get(item.id);
+	assert.ok(placement);
+	const originalHome = { ...placement.home };
+	placement.focus.x += 10;
+	placement.pending.y += 10;
+	assert.deepEqual(placement.home, originalHome);
+});
+
+test("four-side layout rejects a non-positive horizontal capacity", () => {
+	assert.throws(() => fourSidePosition(0, 1_050, 0), /horizontalMaximum must be greater than zero/);
 });
 
 test("a shrunk reset does not reuse stale homes even when item ids are reused", () => {

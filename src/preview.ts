@@ -89,8 +89,9 @@ function publishState(
 	runtime: PreviewRuntime,
 	timeline: ContextTimelineSnapshot,
 	compacting = false,
+	captured = snapshotFor(runtime),
 ): void {
-	const { activeTool, snapshot } = snapshotFor(runtime);
+	const { activeTool, snapshot } = captured;
 	viewer.publish(
 		{
 			phase: compacting ? "compacting" : activeTool.length > 0 ? "tool" : "context",
@@ -103,11 +104,11 @@ function publishState(
 }
 
 function publishContext(runtime: PreviewRuntime, compacting = false): void {
-	const { snapshot } = snapshotFor(runtime);
-	publishState(runtime, runtime.timeline.apply(snapshot, {
+	const captured = snapshotFor(runtime);
+	publishState(runtime, runtime.timeline.apply(captured.snapshot, {
 		compaction: compacting,
 		details: detailsFor(runtime.items),
-	}), compacting);
+	}), compacting, captured);
 }
 
 function advance(runtime: PreviewRuntime): void {
