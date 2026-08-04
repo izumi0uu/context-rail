@@ -20,6 +20,7 @@ The extension observes OMP's public lifecycle events, renders a compact terminal
 - Reveals nodes from the same live context burst in order, while hydration and tab changes stay immediate.
 - Coalesces queued state changes and transfers bounded deltas that the viewer applies atomically.
 - Marks sessions from crashed or disconnected OMP processes offline after their heartbeat expires while retaining history.
+- Keeps active cards in the DOM and virtualizes historical cards and graph edges through a ticker-free Pixi/WebGL layer.
 - Stops the browser render loop after camera, frame, node, and edge animations settle.
 - Opens each card into an in-memory detail drawer with the content OMP exposed at the `context` hook.
 - Does not write message details or transcripts to disk.
@@ -86,18 +87,19 @@ omp
 
 ## Web viewer
 
-The viewer keeps the full-screen camera, pan, zoom, floating-node, and SVG edge behavior of [graphcon-deck](https://github.com/yoheinakajima/graphcon-deck), adapted to reconcile a changing context instead of advancing through authored slides.
+The viewer keeps the full-screen camera, pan, cursor-anchored zoom, floating-node, and spatial scene behavior of [graphcon-deck](https://github.com/yoheinakajima/graphcon-deck), adapted to reconcile a changing context instead of advancing through authored slides.
 
-- **Window** projects the items in the current model call into a compact frame; inactive history remains on the canvas.
-- **Overview** fits the complete session history and dims items outside the current model context.
+- **Window** projects the items in the current model call around a central hub inside a rectangular frame. Historical cards keep their permanent homes; only cards that would overlap the frame move outward on their original center ray, continuing farther only when another card occupies the first target.
+- **Overview** restores every card to its permanent home position and fits the complete spatial history. Compaction summaries open new epochs on a serpentine infinite canvas without moving earlier epochs.
 - Selecting a card opens its model role(s), context state, and allowlisted text, thinking, tool-call, or image blocks. One source card can show multiple model messages when OMP splits developer text from user image attachments.
 - Dashed pending nodes sit just outside the Window frame until a real OMP `context` event confirms that the model received them.
 - Session tabs are read-only. Selecting one changes only the displayed timeline.
-- **Follow active** tracks the most recently active session; turning it off pins the current tab.
+- **Follow active** is off by default, so background activity cannot move the selected tab. Enabling it tracks the most recently active session.
 - Background sessions continue collecting events and show an activity marker without stealing focus.
 - The viewer URL carries a tab-scoped read capability in its fragment. The page removes that fragment from the visible address as soon as it loads and reuses the capability when the tab reloads.
 - Each session remembers its own camera and Window/Overview mode.
-- Dragging the canvas pans, scrolling zooms, and dragging a node temporarily pulls it out of the rail.
+- Dragging the canvas pans, scrolling zooms, and dragging a node temporarily displaces it before it returns to its scene position. Clicking dim history travels to its epoch; left and right arrow keys move between epochs while canvas chrome is not focused.
+- Active and pending cards remain DOM elements. Historical cards and edges use Pixi/WebGL with viewport culling, semantic zoom, an incremental hit grid, and a DOM/SVG fallback if WebGL is unavailable or loses its context.
 - The usage rail, model, phase, tools, and compaction state update over Server-Sent Events.
 
 For a standalone demo:
@@ -124,6 +126,11 @@ src/server.ts         localhost ingest API + SSE viewer server
 
 src/snapshot.ts    shared normalized context model
 src/timeline.ts    observed history, authoritative active set, and reconciliation diffs
+
+web/index.html             viewer shell, live session store, camera, DOM cards, and fallback
+web/src/scene-layout.ts    permanent epochs, four-sided focus layout, and history projection
+web/src/camera.ts          renderer-neutral screen/world coordinate transforms
+web/src/pixi-history.ts    ticker-free historical card, edge, culling, and hit-test renderer
 ```
 
 Keeping the snapshot model independent from OMP makes a future Pi adapter or web viewer possible without rewriting the UI model.
