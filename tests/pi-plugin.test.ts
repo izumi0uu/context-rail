@@ -367,6 +367,8 @@ test("Pi session events immediately hydrate the authoritative model context", as
 		ctx,
 	);
 	assert.equal(buildCalls, 1);
+	assert.equal(publications.at(-1)?.state.captures?.entries.at(-1)?.source, "session-reconstruction");
+	assert.equal(publications.at(-1)?.state.captures?.entries.at(-1)?.reason, "session-start");
 	assert.equal(publications.at(-1)?.state.timeline?.activeIds.length, 1);
 	assert.equal(
 		publications.at(-1)?.state.timeline?.history.at(-1)?.detail?.modelMessages[0]?.modelRole,
@@ -402,6 +404,7 @@ test("Pi session events immediately hydrate the authoritative model context", as
 		ctx,
 	);
 	assert.equal(buildCalls, 2);
+	assert.equal(publications.at(-1)?.state.captures?.entries.at(-1)?.reason, "session-compaction");
 	assert.equal(publications.at(-1)?.state.timeline?.activeIds.length, 2);
 	assert.equal(
 		publications.at(-1)?.state.timeline?.history.filter((item) => item.synthetic).length,
@@ -425,6 +428,8 @@ test("Pi session events immediately hydrate the authoritative model context", as
 		ctx,
 	);
 	assert.equal(buildCalls, 3);
+	assert.equal(publications.at(-1)?.state.captures?.entries.at(-1)?.reason, "session-tree");
+	assert.equal(publications.at(-1)?.state.captures?.entries.length, 3);
 	assert.equal(publications.at(-1)?.state.timeline?.activeIds.length, 1);
 	assert.equal(publications.at(-1)?.source?.activity, false);
 
@@ -547,6 +552,9 @@ test("Pi adapter replacement preserves prior session history in one producer", a
 	assert.equal(resumed?.source?.processId, "pi-replacement-test");
 	assert.equal(resumed?.source?.sessionId, "pi-session-a");
 	assert.equal(resumed?.state.timeline?.history.length, 3);
+	assert.equal(resumed?.state.captures?.entries.length, 2);
+	assert.equal(resumed?.state.captures?.entries[0]?.source, "context-hook");
+	assert.ok(!JSON.stringify(resumed?.state.captures).includes("B current"), "session archives remain isolated across handoff");
 	assert.equal(viewerStops, 0, "session handoff must not disconnect the process producer");
 	assert.equal(viewerDisposals, 2);
 

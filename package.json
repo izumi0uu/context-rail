@@ -26,6 +26,7 @@
     "src",
     "web",
     "README.md",
+    "README.en.md",
     "LICENSE"
   ],
   "exports": {
@@ -51,7 +52,8 @@
   "scripts": {
     "build": "npm run build:node && npm run build:web",
     "build:node": "tsc -p tsconfig.build.json",
-    "build:web": "npm run build:web:core && npm run build:web:pixi",
+    "build:web": "npm run build:web:core && npm run build:web:pixi && npm run build:web:worker",
+    "build:web:worker": "esbuild web/src/scene-worker.ts --bundle --minify --format=iife --legal-comments=external --outfile=web/assets/scene-worker.js",
     "build:web:core": "esbuild web/src/scene-core.ts --bundle --minify --format=iife --global-name=ContextRailCore --legal-comments=external --outfile=web/assets/scene-core.js",
     "build:web:pixi": "esbuild web/src/pixi-history.ts --bundle --minify --format=iife --global-name=ContextRailPixi --legal-comments=external --outfile=web/assets/pixi-history.js",
     "check": "npm run typecheck && npm test",

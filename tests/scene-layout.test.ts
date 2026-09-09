@@ -497,7 +497,7 @@ test("adjacent overlapping history cards keep distinct positions on their own ra
 
 test("pushed history resolves collisions without moving stationary homes", () => {
 	const items = history(80);
-	const activeIds = [items[0]!.id, ...items.slice(-5).map(({ id }) => id)];
+	const activeIds = [items[0]!.id, ...items.slice(-6).map(({ id }) => id)];
 	const activeSet = new Set(activeIds);
 	const result = layout({ history: items, activeIds });
 	const pushed = items
@@ -601,18 +601,150 @@ test("pending cards participate in the history exclusion frame", () => {
 	}
 });
 
+test("focus window lays out active context left to right and then top to bottom", () => {
+	const items = history(8);
+	items[2]!.kind = "memory";
+	const activeIds = [
+		items[0]!.id,
+		items[4]!.id,
+		items[2]!.id,
+		items[7]!.id,
+		items[1]!.id,
+	];
+	const result = buildSceneLayout({ history: items, activeIds }, {
+		...NODE_OPTIONS,
+		focusColumns: 3,
+	});
+	const points = activeIds.map((id) => result.placements.get(id)!.focus);
+
+	assert.deepEqual(points[0], epochAnchor(0), "the first context item anchors the matrix");
+	assert.ok(points[0]!.x < points[1]!.x && points[1]!.x < points[2]!.x);
+	assert.equal(points[0]!.y, points[1]!.y);
+	assert.equal(points[1]!.y, points[2]!.y);
+	assert.equal(points[3]!.x, points[0]!.x);
+	assert.equal(points[4]!.x, points[1]!.x);
+	assert.equal(points[3]!.y, points[4]!.y);
+	assert.ok(points[3]!.y > points[0]!.y);
+	assert.equal(result.focusHubId, items[2]!.id);
+	assert.deepEqual(
+		result.placements.get(result.focusHubId!)!.focus,
+		points[2],
+		"hub metadata must not pull a context item out of sequence",
+	);
+});
+
+test("focus matrix removes unknown and duplicate ids without leaving empty cells", () => {
+	const items = history(3);
+	const result = buildSceneLayout({
+		history: items,
+		activeIds: ["ghost", items[2]!.id, "missing", items[0]!.id, items[2]!.id, items[1]!.id],
+	}, {
+		...NODE_OPTIONS,
+		focusColumns: 2,
+	});
+	const anchor = epochAnchor(0);
+
+	assert.deepEqual(result.placements.get(items[2]!.id)!.focus, anchor);
+	assert.deepEqual(result.placements.get(items[0]!.id)!.focus, {
+		x: anchor.x + NODE_OPTIONS.nodeWidth + 30,
+		y: anchor.y,
+	});
+	assert.deepEqual(result.placements.get(items[1]!.id)!.focus, {
+		x: anchor.x,
+		y: anchor.y + NODE_OPTIONS.nodeHeight + 30,
+	});
+});
+
+test("focus matrix appends into the next cell without moving earlier active cards", () => {
+	const items = history(7);
+	const buildActiveLayout = (itemCount: number) => buildSceneLayout({
+		history: items,
+		activeIds: items.slice(0, itemCount).map(({ id }) => id),
+	}, {
+		...NODE_OPTIONS,
+		focusColumns: 6,
+	});
+	const five = buildActiveLayout(5);
+	const six = buildActiveLayout(6);
+	const seven = buildActiveLayout(7);
+
+	for (const item of items.slice(0, 5)) {
+		assert.deepEqual(six.placements.get(item.id)!.focus, five.placements.get(item.id)!.focus);
+	}
+	for (const item of items.slice(0, 6)) {
+		assert.deepEqual(seven.placements.get(item.id)!.focus, six.placements.get(item.id)!.focus);
+	}
+	assert.equal(seven.placements.get(items[6]!.id)!.focus.x, seven.placements.get(items[0]!.id)!.focus.x);
+	assert.ok(seven.placements.get(items[6]!.id)!.focus.y > seven.placements.get(items[0]!.id)!.focus.y);
+});
+
+test("focus matrix enforces its maximum width at the layout boundary", () => {
+	const items = history(7);
+	const timeline = { history: items, activeIds: items.map(({ id }) => id) };
+	const capped = buildSceneLayout(timeline, { ...NODE_OPTIONS, focusColumns: 6 });
+	const oversized = buildSceneLayout(timeline, { ...NODE_OPTIONS, focusColumns: 99 });
+
+	assert.equal(oversized.activeBounds.width, capped.activeBounds.width);
+	assert.equal(
+		oversized.placements.get(items[6]!.id)!.focus.x,
+		oversized.placements.get(items[0]!.id)!.focus.x,
+	);
+	assert.ok(
+		oversized.placements.get(items[6]!.id)!.focus.y
+			> oversized.placements.get(items[0]!.id)!.focus.y,
+	);
+	assert.throws(
+		() => buildSceneLayout(timeline, { ...NODE_OPTIONS, focusColumns: 0 }),
+		/focusColumns must be greater than zero/,
+	);
+});
+
+test("focus matrix defaults to two columns on mobile", () => {
+	const items = history(3);
+	const result = buildSceneLayout({
+		history: items,
+		activeIds: items.map(({ id }) => id),
+	}, {
+		...NODE_OPTIONS,
+		mobile: true,
+	});
+
+	assert.equal(result.placements.get(items[0]!.id)!.focus.y, result.placements.get(items[1]!.id)!.focus.y);
+	assert.equal(result.placements.get(items[2]!.id)!.focus.x, result.placements.get(items[0]!.id)!.focus.x);
+	assert.ok(result.placements.get(items[2]!.id)!.focus.y > result.placements.get(items[0]!.id)!.focus.y);
+});
+
+test("focus column count never changes permanent history geometry", () => {
+	const items = history(18);
+	const timeline = {
+		history: items,
+		activeIds: items.slice(-6).map(({ id }) => id),
+	};
+	const twoColumns = buildSceneLayout(timeline, { ...NODE_OPTIONS, focusColumns: 2 });
+	const sixColumns = buildSceneLayout(timeline, { ...NODE_OPTIONS, focusColumns: 6 });
+
+	for (const item of items) {
+		assert.deepEqual(twoColumns.placements.get(item.id)!.home, sixColumns.placements.get(item.id)!.home);
+	}
+	assert.deepEqual(twoColumns.epochs, sixColumns.epochs);
+	assert.deepEqual(twoColumns.homeBounds, sixColumns.homeBounds);
+});
+
 test("focus layout stops widening and grows vertically after reaching its width cap", () => {
 	const buildActiveLayout = (itemCount: number) => {
 		const items = history(itemCount);
-		return layout({ history: items, activeIds: items.map(({ id }) => id) });
+		return buildSceneLayout({ history: items, activeIds: items.map(({ id }) => id) }, {
+			...NODE_OPTIONS,
+			focusColumns: 6,
+		});
 	};
-	const widthSaturated = buildActiveLayout(127);
-	const verticallyExpanded = buildActiveLayout(169);
+	const widthSaturated = buildActiveLayout(6);
+	const verticallyExpanded = buildActiveLayout(7);
 
 	assert.equal(verticallyExpanded.activeBounds.width, widthSaturated.activeBounds.width);
 	assert.ok(
 		verticallyExpanded.activeBounds.height > widthSaturated.activeBounds.height,
-		"later rings should add height after horizontal growth is capped",
+		"later rows should add height after horizontal growth is capped",
 	);
 	assert.equal(verticallyExpanded.focusHubId, "item-0");
 	assert.deepEqual(verticallyExpanded.placements.get("item-0")?.focus, epochAnchor(0));

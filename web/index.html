@@ -21,6 +21,7 @@
     --shadow: 0 8px 22px rgba(36, 39, 43, 0.08);
     --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
     --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --inspector-width: min(480px, 42vw);
   }
 
   * { box-sizing: border-box; }
@@ -42,7 +43,7 @@
     position: fixed;
     inset: 0;
     overflow: hidden;
-    clip-path: inset(var(--graph-clip-top, 0px) 0 var(--graph-clip-bottom, 0px) 0);
+    clip-path: inset(var(--graph-clip-top, 0px) var(--graph-clip-right, 0px) var(--graph-clip-bottom, 0px) 0);
     touch-action: none;
     cursor: grab;
   }
@@ -778,6 +779,117 @@
     .node-detail { display: none; }
   }
 
+  [hidden] { display: none !important; }
+  button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible, .node:focus-visible {
+    outline: 2px solid var(--indigo); outline-offset: 3px;
+  }
+  .node { padding: 12px; border-color: var(--hair); border-radius: 10px; }
+  .node-title { font-size: 14px; margin-top: 7px; line-height: 1.35; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .node-detail { font-family: var(--sans); font-size: 11px; margin-top: 5px; }
+  .node-kind { font-size: 9px; }
+  .node.selected { outline: 2px solid var(--ink); outline-offset: 4px; }
+  .node[data-synthetic="true"] { border-style: dashed; border-radius: 22px; box-shadow: none; }
+  .node[data-error="true"]::before { background: var(--danger); }
+  .node-badge { font-family: var(--mono); font-size: 8px; margin-left: 7px; color: var(--muted); }
+  #workspacebar {
+    position: fixed; top: 124px; left: 22px; right: 22px; z-index: 22;
+    display: flex; align-items: center; gap: 12px; min-height: 38px;
+  }
+  #toolbar { position: static; display: flex; flex-shrink: 0; padding: 3px; box-shadow: none; }
+  #toolbar button { font-size: 11px; min-height: 34px; }
+  #search-box { margin-left: auto; position: relative; width: min(280px, 32vw); }
+  #search-input { width: 100%; height: 40px; padding: 0 34px 0 12px; border: 1px solid var(--hair); border-radius: 8px; background: var(--surface); color: var(--ink); font: 12px var(--sans); }
+  #search-clear { position: absolute; right: 4px; top: 4px; width: 32px; height: 32px; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+  #search-results { position: absolute; top: 47px; right: 0; width: min(400px, calc(100vw - 32px)); max-height: min(420px, 55vh); overflow: auto; border: 1px solid var(--hair); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow); }
+  #search-note { margin: 0; padding: 12px; font-size: 11px; color: var(--muted); border-bottom: 1px solid var(--hair); }
+  .result-row { display: block; width: 100%; padding: 12px; text-align: left; background: transparent; border: 0; border-bottom: 1px solid var(--hair); cursor: pointer; color: var(--ink); }
+  .result-row:hover { background: var(--canvas); }
+  .result-row strong, .result-row small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .result-row strong { font-size: 12px; font-weight: 600; }
+  .result-row small { margin-top: 5px; color: var(--muted); font-size: 11px; }
+  #return-live { border: 1px solid var(--hair); background: var(--surface); padding: 9px 12px; border-radius: 8px; color: var(--ink); font-size: 11px; cursor: pointer; white-space: nowrap; }
+  #capturebar { position: fixed; bottom: 78px; left: 22px; right: 22px; z-index: 21; display: flex; align-items: center; gap: 12px; min-height: 38px; }
+  #capture-select { max-width: 260px; min-width: 132px; height: 36px; border: 1px solid var(--hair); border-radius: 8px; padding: 0 9px; background: var(--surface); color: var(--ink); font: 11px var(--mono); }
+  #capture-label { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #changes-open { margin-left: auto; border: 1px solid var(--hair); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 9px 12px; cursor: pointer; white-space: nowrap; font: 11px var(--mono); }
+  #changes-open:disabled { color: var(--muted); cursor: default; }
+  #change-list { position: absolute; bottom: 46px; right: 0; width: min(360px, calc(100vw - 32px)); max-height: 340px; overflow: auto; background: var(--surface); border: 1px solid var(--hair); border-radius: 10px; box-shadow: var(--shadow); }
+  #change-list p { font-size: 11px; color: var(--muted); padding: 0 12px; }
+  #detail-panel { width: var(--inspector-width); box-shadow: none; visibility: hidden; transition: transform 180ms ease; }
+  body[data-detail-open="true"] #detail-panel { visibility: visible; }
+  body[data-detail-open="true"] #detail-backdrop { display: none; }
+  body[data-detail-open="true"] #workspacebar,
+  body[data-detail-open="true"] #sessionbar,
+  body[data-detail-open="true"] #topbar,
+  body[data-detail-open="true"] #capturebar { right: calc(var(--inspector-width) + 22px); }
+  body[data-detail-open="true"] #statusbar { right: var(--inspector-width); }
+  #detail-kind { font-size: 10px; }
+  #detail-title { font-size: 20px; line-height: 1.4; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  #detail-meta { flex-shrink: 0; }
+  .detail-meta-cell span { font-size: 10px; color: var(--muted); }
+  .detail-meta-cell strong { font-size: 11px; }
+  #detail-actions { display: flex; align-items: center; gap: 6px; padding: 12px 22px; border-bottom: 1px solid var(--hair); flex-shrink: 0; }
+  #detail-actions button, #detail-nav button, .load-more, #detail-update { border: 1px solid var(--hair); border-radius: 7px; background: var(--surface); color: var(--ink); font-size: 11px; padding: 8px 11px; cursor: pointer; }
+  #detail-actions button[aria-pressed="true"] { background: var(--ink); color: white; border-color: var(--ink); }
+  #detail-copy { margin-left: auto; }
+  #detail-update { margin: 10px 22px 0; text-align: left; background: #f2f0ff; color: #5144b5; border-color: #dcd6fc; flex-shrink: 0; }
+  #detail-content { overflow: auto; overflow-anchor: none; font-size: 14px; line-height: 1.7; padding-bottom: 24px; min-height: 0; }
+  .model-message > header { margin: 22px 0 10px; padding: 6px 0; font: 10px var(--mono); color: var(--muted); border-bottom: 1px solid var(--hair); text-transform: uppercase; }
+  .detail-block { padding: 14px 0; }
+  .detail-block-label { font-size: 10px; color: var(--muted); }
+  .detail-block pre { font-size: 12px; line-height: 1.7; }
+  .reading p { margin: 0 0 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .reading h3 { font-size: 16px; line-height: 1.45; margin: 12px 0; }
+  .reading pre { white-space: pre-wrap; background: var(--canvas); padding: 12px; border-radius: 7px; }
+  .reading .reading-list { padding-left: 10px; }
+  .detail-block details > summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+  .load-more { margin-top: 10px; }
+  #detail-provenance { border-top: 1px solid var(--hair); padding: 14px 0; margin-top: 20px; color: var(--muted); font-size: 12px; }
+  #detail-provenance summary { cursor: pointer; }
+  #detail-provenance p { margin: 10px 0; }
+  #history-selection { position: absolute; pointer-events: none; border: 2px solid var(--ink); border-radius: 14px; box-sizing: border-box; z-index: 4; }
+  #work-status { position: fixed; left: 22px; right: 22px; top: var(--search-results-top, 172px); z-index: 20; color: var(--muted); font: 10px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  body[data-detail-open="true"] #work-status { right: calc(var(--inspector-width) + 22px); }
+  #viewport[data-scene-busy="true"] .node { pointer-events: none; }
+  #detail-nav { display: flex; justify-content: space-between; gap: 8px; padding: 12px 22px; border-top: 1px solid var(--hair); flex-shrink: 0; }
+  #detail-nav button:disabled { opacity: 0.4; cursor: default; }
+  #reader-count { align-self: center; font: 10px var(--mono); color: var(--muted); }
+  #statusbar { min-height: 64px; }
+  @media (max-width: 960px) and (min-width: 721px) {
+    body[data-detail-open="true"] #search-box { width: 150px; }
+    body[data-detail-open="true"] #workspacebar { flex-wrap: wrap; gap: 8px; }
+    body[data-detail-open="true"] #search-box { margin-left: 0; flex: 1; }
+    body[data-detail-open="true"] #capture-label, body[data-detail-open="true"] #legend { display: none; }
+  }
+  @media (max-width: 720px) {
+    #workspacebar { top: 116px; left: 16px; right: 16px; gap: 8px; flex-wrap: wrap; }
+    #toolbar button { min-width: 50px; font-size: 10px; }
+    #search-box { width: auto; min-width: 110px; flex: 1; }
+    #search-results { position: fixed; left: 16px; right: 16px; top: var(--search-results-top, 166px); width: auto; }
+    #return-live { font-size: 10px; padding: 8px; }
+    #capturebar { bottom: 104px; left: 16px; right: 16px; gap: 8px; }
+    #capture-select { min-width: 110px; max-width: 180px; font-size: 10px; }
+    #capture-label { display: none; }
+    #changes-open { font-size: 10px; }
+    #detail-panel { width: 100vw; }
+    #statusbar { min-height: 92px; }
+    body[data-detail-open="true"] #workspacebar, body[data-detail-open="true"] #capturebar,
+    body[data-detail-open="true"] #sessionbar, body[data-detail-open="true"] #topbar { right: 16px; }
+    body[data-detail-open="true"] #statusbar { right: 0; }
+    #detail-actions { padding: 10px 18px; }
+    #detail-update { margin: 10px 18px 0; }
+    #detail-nav { padding: 12px 18px; }
+    #work-status, body[data-detail-open="true"] #work-status { left: 16px; right: 16px; }
+  }
+  @media (max-height: 420px) and (orientation: landscape) {
+    #workspacebar { top: 80px; left: 14px; right: 14px; flex-wrap: nowrap; }
+    #capturebar { bottom: 61px; min-height: 32px; }
+    #capture-select { height: 30px; }
+    #capture-label { display: none; }
+    #statusbar { min-height: 52px; }
+    .node-title { -webkit-line-clamp: 1; }
+  }
+
   @media (prefers-reduced-motion: reduce) {
 	    *, *::before, *::after {
 	      animation: none !important;
@@ -794,6 +906,7 @@
       <rect id="window-frame" x="0" y="0" width="0" height="0" rx="8" hidden></rect>
       <g id="edges"></g>
     </svg>
+    <div id="history-selection" aria-hidden="true" hidden></div>
   </div>
 </div>
 
@@ -826,17 +939,26 @@
   <div id="session-tabs" role="tablist" aria-label="Sessions"></div>
 </nav>
 
-<div id="toolbar" role="group" aria-label="Graph view">
-  <button id="window-mode" type="button" aria-pressed="true">Window</button>
-  <button id="overview-mode" type="button" aria-pressed="false">Overview</button>
-  <button id="fit-view" type="button" title="Fit graph to view">Fit</button>
+<div id="workspacebar">
+  <div id="toolbar" role="group" aria-label="Graph view">
+    <button id="window-mode" type="button" aria-pressed="true">Context</button>
+    <button id="overview-mode" type="button" aria-pressed="false">History</button>
+    <button id="fit-view" type="button" title="Fit graph to view">Fit</button>
+  </div>
+  <div id="search-box">
+    <input id="search-input" type="search" placeholder="Search content…" aria-label="Search context content" autocomplete="off" aria-controls="search-results">
+    <button id="search-clear" type="button" aria-label="Clear search" hidden>×</button>
+    <div id="search-results" hidden><p id="search-note" aria-live="polite"></p><div id="search-list"></div></div>
+  </div>
+  <button id="return-live" type="button" title="Return to the latest captured context">Latest ↗</button>
 </div>
 
 <div id="empty-state">waiting for context</div>
+<div id="work-status" role="status" aria-live="polite" hidden></div>
 <div id="tooltip" role="tooltip"></div>
 
 <button id="detail-backdrop" type="button" aria-label="Close item detail" tabindex="-1"></button>
-<aside id="detail-panel" role="dialog" aria-modal="true" aria-labelledby="detail-title" aria-hidden="true">
+<aside id="detail-panel" role="region" aria-labelledby="detail-title" aria-hidden="true" inert>
   <header id="detail-header">
     <div>
       <span id="detail-kind">Context</span>
@@ -850,8 +972,26 @@
     <div class="detail-meta-cell"><span>context state</span><strong id="detail-state">outside context</strong></div>
     <div class="detail-meta-cell"><span>model role</span><strong id="detail-role">unknown</strong></div>
   </div>
+  <div id="detail-actions" role="group" aria-label="Content display">
+    <button id="detail-read" type="button" aria-pressed="true">Read</button>
+    <button id="detail-raw" type="button" aria-pressed="false">Original text</button>
+    <button id="detail-copy" type="button">Copy text</button>
+  </div>
+  <button id="detail-update" type="button" hidden>Content updated · load latest version</button>
   <div id="detail-content"></div>
+  <div id="detail-nav">
+    <button id="detail-prev" type="button">← Previous</button>
+    <span id="reader-count"></span>
+    <button id="detail-next" type="button">Next →</button>
+  </div>
 </aside>
+
+<div id="capturebar" aria-label="Context captures">
+  <select id="capture-select" aria-label="View a context capture"><option value="live">Live context</option></select>
+  <span id="capture-label">Latest observed context</span>
+  <button id="changes-open" type="button" aria-expanded="false" aria-controls="change-list" disabled>No capture diff yet</button>
+  <div id="change-list" hidden></div>
+</div>
 
 <footer id="statusbar">
   <div id="usage-wrap">
@@ -905,6 +1045,8 @@ const sessionBar = $("#sessionbar");
 const sessionTabs = $("#session-tabs");
 const followToggle = $("#follow-toggle");
 const toolbar = $("#toolbar");
+const workspaceBar = $("#workspacebar");
+const captureBar = $("#capturebar");
 const statusBar = $("#statusbar");
 const sceneEngine = globalThis.ContextRailCore;
 const historyEngine = globalThis.ContextRailPixi;
@@ -957,6 +1099,39 @@ let freeCamera = false;
 let lastAnimatedRevision = -1;
 let hoveredNode = null;
 let detailSelection = null;
+let livePayload = null;
+let frozenCapture = null;
+let detailDisplayedItem = null;
+let detailOverride = null;
+let detailMode = "read";
+let detailReturnFocus = null;
+let detailBefore = null;
+let detailCompareKey = null;
+let lastHistoryReference = null;
+let lastIndexedTimeline = null;
+let historyById = new Map();
+let currentActiveIds = new Set();
+let currentPendingIds = new Set();
+let currentSummarySources = new Map();
+let detailOrder = [];
+let detailOrderPositions = new Map();
+const contentIndex = new sceneEngine.ContentIndex();
+const BACKGROUND_ITEM_THRESHOLD = 750;
+const layoutWorker = new sceneEngine.LayoutWorkerClient();
+let sceneJobGeneration = 0;
+let pendingScene = null;
+let preparedLayout = null;
+let indexAbort = null;
+let indexGeneration = 0;
+let indexBusy = false;
+let workerFallback = false;
+let searchGeneration = 0;
+let searchTimer = null;
+let lastSearchRevision = -1;
+let lastCaptureOptionsKey = null;
+let lastCaptureArchive = null;
+let captureChanges = null;
+const viewStats = { reconciliations: 0, inspectorRenders: 0, searchMs: 0, reconcileMs: 0, maxReconcileMs: 0 };
 let camera = { x: 500, y: 420, scale: 0.8 };
 let cameraTarget = { x: 500, y: 420, scale: 0.8 };
 let frameBox = { x: 180, y: 220, width: 640, height: 360 };
@@ -1125,13 +1300,26 @@ function isMobileLayout() {
 	return innerWidth <= MOBILE_BREAKPOINT;
 }
 
-function shortLandscapeColumns(viewportWidth, viewportHeight, itemCount) {
-	if (viewportHeight > 420 || viewportWidth <= viewportHeight) return 0;
-	return Math.min(5, Math.max(1, itemCount));
+function graphWidth() {
+	return document.body.dataset.detailOpen === "true" && !isMobileLayout()
+		? Math.max(1, innerWidth - detailPanel.getBoundingClientRect().width)
+		: innerWidth;
+}
+
+function focusGridColumns(viewportWidth) {
+	if (viewportWidth <= 720) return 2;
+	if (viewportWidth <= 960) return 3;
+	if (viewportWidth <= 1120) return 4;
+	if (viewportWidth <= 1280) return 5;
+	return 6;
+}
+
+function isShortLandscapeViewport(viewportWidth, viewportHeight) {
+	return viewportHeight <= 420 && viewportWidth > viewportHeight;
 }
 
 function isShortLandscapeLayout() {
-	return shortLandscapeColumns(innerWidth, innerHeight, 1) > 0;
+	return isShortLandscapeViewport(innerWidth, innerHeight);
 }
 
 function availableGraphViewport(viewportHeight, sessionBottom, toolbarTop, statusTop) {
@@ -1147,23 +1335,28 @@ function availableGraphViewport(viewportHeight, sessionBottom, toolbarTop, statu
 }
 
 function syncGraphViewport() {
+		document.documentElement.style.setProperty("--search-results-top", `${workspaceBar.getBoundingClientRect().bottom + 8}px`);
 		const bounds = availableGraphViewport(
 			innerHeight,
-			sessionBar.getBoundingClientRect().bottom,
-			isShortLandscapeLayout() ? innerHeight : toolbar.getBoundingClientRect().top,
+			workspaceBar.getBoundingClientRect().bottom + ($("#work-status").hidden ? 18 : 38),
+			captureBar.getBoundingClientRect().top - 18,
 			statusBar.getBoundingClientRect().top,
 		);
 		const topInset = `${bounds.top}px`;
 		const bottomInset = `${Math.max(0, innerHeight - bounds.bottom)}px`;
+		bounds.width = graphWidth();
+		bounds.centerX = bounds.width / 2;
 		const boundsChanged = !graphViewportBounds
 			|| differs(graphViewportBounds.top, bounds.top, POSITION_EPSILON)
-			|| differs(graphViewportBounds.bottom, bounds.bottom, POSITION_EPSILON);
+			|| differs(graphViewportBounds.bottom, bounds.bottom, POSITION_EPSILON)
+			|| differs(graphViewportBounds.width, bounds.width, POSITION_EPSILON);
 		const clipChanged = viewport.style.getPropertyValue("--graph-clip-top") !== topInset
 			|| viewport.style.getPropertyValue("--graph-clip-bottom") !== bottomInset;
 		if (clipChanged) {
 			viewport.style.setProperty("--graph-clip-top", topInset);
 			viewport.style.setProperty("--graph-clip-bottom", bottomInset);
 		}
+		viewport.style.setProperty("--graph-clip-right", `${innerWidth - bounds.width}px`);
 		graphViewportBounds = bounds;
 		return boundsChanged || clipChanged;
 }
@@ -1183,7 +1376,7 @@ const graphChromeResizeObserver = typeof ResizeObserver === "function"
 		markCameraDirty();
 	})
 	: null;
-for (const element of [sessionBar, toolbar, statusBar]) graphChromeResizeObserver?.observe(element);
+for (const element of [sessionBar, workspaceBar, captureBar, statusBar]) graphChromeResizeObserver?.observe(element);
 syncGraphViewport();
 
 function handleReducedMotionChange(event) {
@@ -1235,6 +1428,7 @@ function timelineFrom(payload) {
 }
 
 function clearGraph() {
+  cancelBackgroundWork();
   hideTooltip();
   closeDetail();
 	windowFrame.toggleAttribute("hidden", true);
@@ -1262,6 +1456,11 @@ function clearGraph() {
 	lastReconciledMode = null;
 	lastReconciledRendererState = null;
 	lastReconciledDimensions = null;
+	lastHistoryReference = null;
+	lastIndexedTimeline = null;
+	historyById.clear();
+	contentIndex.clear();
+	clearSearch();
 }
 
 function syncModeChrome() {
@@ -1316,6 +1515,9 @@ function selectSession(streamId, manual = false) {
   }
 	  if (selectedStreamId && sessionStates.has(selectedStreamId)) saveSessionView();
   clearGraph();
+  frozenCapture = null;
+  livePayload = null;
+  lastCaptureOptionsKey = null;
   selectedStreamId = streamId;
   restoreSessionView(streamId);
   currentPayload = null;
@@ -1396,6 +1598,10 @@ function applyRenderStatePatch(previous, patch) {
   if (Object.hasOwn(patch, "snapshot")) state.snapshot = patch.snapshot || undefined;
   if (patch.phase) state.phase = patch.phase;
   if (Array.isArray(patch.activeTools)) state.activeTools = [...patch.activeTools];
+  if (Object.hasOwn(patch, "captures")) {
+    state.captures = sceneEngine.applyCaptureArchivePatch(state.captures, patch.captures);
+    if (!state.captures) delete state.captures;
+  }
   if (patch.timeline === null) {
     delete state.timeline;
     return state;
@@ -1406,21 +1612,27 @@ function applyRenderStatePatch(previous, patch) {
     ? emptyTimeline()
 	    : { ...state.timeline };
 	  const historyUpserts = patch.timeline.historyUpserts || [];
-	  if (historyUpserts.length > 0) {
+	  if (historyUpserts.length > 0 || patch.timeline.removedHistoryIds?.length) {
 	    const history = new Map(timeline.history.map((item) => [item.id, item]));
+	    for (const id of patch.timeline.removedHistoryIds || []) history.delete(id);
 	    for (const item of historyUpserts) history.set(item.id, structuredClone(item));
 	    timeline.history = [...history.values()].sort((left, right) => left.order - right.order);
 	  }
 
 	  const summaryEdgeUpserts = patch.timeline.summaryEdgeUpserts || [];
-	  if (summaryEdgeUpserts.length > 0) {
+	  if (summaryEdgeUpserts.length > 0 || patch.timeline.removedSummaryEdges?.length) {
 	    const summaryEdges = new Map(timeline.summaryEdges.map((edge) => [summaryEdgeKey(edge), edge]));
+	    for (const edge of patch.timeline.removedSummaryEdges || []) summaryEdges.delete(summaryEdgeKey(edge));
 	    for (const edge of summaryEdgeUpserts) {
 	      summaryEdges.set(summaryEdgeKey(edge), structuredClone(edge));
 	    }
 	    timeline.summaryEdges = [...summaryEdges.values()];
 	  }
   if (Number.isFinite(patch.timeline.revision)) timeline.revision = patch.timeline.revision;
+  if (Object.hasOwn(patch.timeline, "retention")) {
+    if (patch.timeline.retention === null) delete timeline.retention;
+    else timeline.retention = { ...patch.timeline.retention };
+  }
   for (const key of [
     "activeIds",
     "enteredIds",
@@ -1530,6 +1742,7 @@ function applyHubPayload(payload) {
 				sessionStates.delete(streamId);
 				sessionViews.delete(streamId);
 				sessionLayouts.delete(streamId);
+				layoutWorker.forget(`${streamId}|`);
 			unreadSessions.delete(streamId);
 			deltaTransfers.delete(streamId);
 		}
@@ -1553,6 +1766,13 @@ function applyHubPayload(payload) {
 		clearGraph();
 		selectedStreamId = null;
 		currentPayload = null;
+		livePayload = null;
+		frozenCapture = null;
+		lastCaptureOptionsKey = null;
+		syncCaptureControls();
+		updateChrome({ snapshot: null, phase: "idle", activeTools: [], timeline: timelineFrom({}) });
+		$("#empty-state").textContent = "waiting for context";
+		$("#empty-state").setAttribute("aria-hidden", "false");
 		$("#empty-state").classList.remove("hidden");
 	}
 
@@ -1565,11 +1785,15 @@ function applyHubPayload(payload) {
 
 function nodeText(item, index) {
   const meta = kindMeta[item.kind] || kindMeta.unknown;
-  const state = item.pending ? "awaiting context" : item.active ? "active context" : "outside context";
+  const content = sceneEngine.projectContent(item);
+  const state = detailState(item);
+	const excerpt = content.preview.startsWith(content.title) ? content.preview.slice(content.title.length).trim() : content.preview;
   return {
-    kind: meta.label,
-    title: item.summary ? "Compaction summary" : item.toolName || meta.label,
-    detail: item.toolName ? `${state} - ${item.toolName}` : `${state} - history ${index + 1}`,
+    kind: item.synthetic ? "Event" : meta.label,
+    title: content.title,
+    detail: excerpt || state,
+    badge: content.messageCount > 1 ? `${content.messageCount} msgs` : content.imageCount ? `${content.imageCount} img` : "",
+    state,
   };
 }
 
@@ -1592,8 +1816,8 @@ function createNode(item, index, target, dimensions, revealAt = 0, start = null)
   kind.className = "node-kind";
   const title = document.createElement("span");
   title.className = "node-title";
-	  const detail = document.createElement("span");
-	  detail.className = "node-detail";
+  const detail = document.createElement("span");
+  detail.className = "node-detail";
 	  element.append(kind, title, detail);
 
   const revealed = revealAt === 0;
@@ -1651,8 +1875,11 @@ function updateNodeContent(node, item, index) {
 	    && node.content.active === active
 	    && node.content.pending === pending
 	    && node.content.memory === memory
+	    && node.content.badge === text.badge
+	    && node.content.synthetic === Boolean(item.synthetic)
+	    && node.content.isError === Boolean(item.detail?.isError)
 	  ) return;
-	  node.content = { color: meta.color, kind: text.kind, title: text.title, detail: text.detail, active, pending, memory };
+	  node.content = { color: meta.color, kind: text.kind, title: text.title, detail: text.detail, active, pending, memory, badge: text.badge, synthetic: Boolean(item.synthetic), isError: Boolean(item.detail?.isError) };
 	  node.element.style.setProperty("--node-color", meta.color);
 		node.element.classList.toggle("active", active);
 		node.element.classList.toggle("inactive", !active && !pending);
@@ -1660,14 +1887,25 @@ function updateNodeContent(node, item, index) {
 		node.element.classList.toggle("memory", memory);
 	node.element.dataset.itemId = node.key;
 	node.element.dataset.contextState = item.pending ? "pending" : item.active ? "active" : "history";
-  node.kind.textContent = text.kind;
+  node.element.dataset.synthetic = String(Boolean(item.synthetic));
+  node.element.dataset.error = String(Boolean(item.detail?.isError));
+  node.element.classList.toggle("selected", detailSelection?.itemId === item.id);
+  node.element.setAttribute("aria-label", `${text.kind}: ${text.title}. ${text.state}`);
+  node.element.setAttribute("aria-pressed", String(detailSelection?.itemId === item.id));
+  node.kind.textContent = text.kind + (text.badge ? ` · ${text.badge}` : "");
   node.title.textContent = text.title;
   node.detail.textContent = text.detail;
 }
 
 function buildLayout(timeline, dimensions) {
 		if (!sceneEngine?.buildSceneLayout) throw new Error("ContextRail scene layout is unavailable");
-		const dimensionsKey = `${dimensions.width}:${dimensions.height}:${isShortLandscapeLayout()}:${isMobileLayout()}`;
+		const focusColumns = focusGridColumns(graphWidth());
+		const dimensionsKey = `${dimensions.width}:${dimensions.height}:${focusColumns}:${isShortLandscapeLayout()}:${isMobileLayout()}`;
+		if (preparedLayout && sceneEngine.sameSceneTimeline(preparedLayout.timeline, timeline) && preparedLayout.dimensionsKey === dimensionsKey) {
+			const layout = preparedLayout.layout;
+			if (selectedStreamId) sessionLayouts.set(selectedStreamId, { timeline, dimensionsKey, layout });
+			return layout;
+		}
 		const cached = selectedStreamId ? sessionLayouts.get(selectedStreamId) : null;
 		if (cached?.timeline === timeline && cached.dimensionsKey === dimensionsKey) return cached.layout;
 		const layout = sceneEngine.buildSceneLayout(timeline, {
@@ -1675,6 +1913,7 @@ function buildLayout(timeline, dimensions) {
 			nodeHeight: dimensions.height,
 			compact: isShortLandscapeLayout(),
 			mobile: isMobileLayout(),
+			focusColumns,
 		}, cached?.layout);
 		if (selectedStreamId) sessionLayouts.set(selectedStreamId, { timeline, dimensionsKey, layout });
 		return layout;
@@ -1733,7 +1972,7 @@ function fallbackDomIds(items, activeIds, pendingIds) {
 	if (!currentSceneLayout) return wanted;
 	const viewportBounds = graphViewport();
 	const scale = Math.max(camera.scale, MIN_CAMERA_SCALE);
-	const halfWidth = (innerWidth / 2 + FALLBACK_OVERSCAN_PX) / scale;
+	const halfWidth = (graphWidth() / 2 + FALLBACK_OVERSCAN_PX) / scale;
 	const halfHeight = (viewportBounds.height / 2 + FALLBACK_OVERSCAN_PX) / scale;
 	const visibleBounds = {
 		left: camera.x - halfWidth,
@@ -2192,7 +2431,7 @@ function reconcileEdges(timeline, items, activeIds) {
 
 function fitScaleForBounds(bounds) {
 	const compact = isShortLandscapeLayout();
-	const availableWidth = innerWidth - (compact ? 24 : 48);
+	const availableWidth = graphWidth() - (compact ? 24 : 48);
 	const viewport = graphViewport();
 	const padding = compact ? 32 : 100;
 	return Math.max(MIN_CAMERA_SCALE, Math.min(
@@ -2216,7 +2455,7 @@ function constrainCameraWithin(candidate, bounds) {
 	return sceneEngine.constrainCameraToBounds(
 		candidate,
 		bounds,
-		{ width: innerWidth, height: viewport.height },
+		{ width: viewport.width, height: viewport.height },
 		MIN_VISIBLE_SCENE_PIXELS,
 	);
 }
@@ -2226,7 +2465,7 @@ function constrainCameraToRegions(candidate, regions) {
 	return sceneEngine.constrainCameraToContent(
 		candidate,
 		regions,
-		{ width: innerWidth, height: viewport.height },
+		{ width: viewport.width, height: viewport.height },
 		MIN_VISIBLE_SCENE_PIXELS,
 	);
 }
@@ -2235,7 +2474,7 @@ function constrainCamera(candidate, requireContent = false) {
 	const bounds = currentSceneLayout?.worldBounds;
 	if (!bounds) return candidate;
 	const viewport = graphViewport();
-	const dimensions = { width: innerWidth, height: viewport.height };
+	const dimensions = { width: viewport.width, height: viewport.height };
 	const bounded = sceneEngine.constrainCameraToBounds(
 		candidate,
 		bounds,
@@ -2364,14 +2603,14 @@ function renderFrame(time) {
 		camera.x = approach(camera.x, cameraTarget.x, ease, POSITION_EPSILON);
     camera.y = approach(camera.y, cameraTarget.y, ease, POSITION_EPSILON);
     camera.scale = approach(camera.scale, cameraTarget.scale, ease, SCALE_EPSILON);
-		world.style.transform = `translate(${innerWidth / 2 - camera.x * camera.scale}px, ${viewport.centerY - camera.y * camera.scale}px) scale(${camera.scale})`;
+		world.style.transform = `translate(${viewport.centerX - camera.x * camera.scale}px, ${viewport.centerY - camera.y * camera.scale}px) scale(${camera.scale})`;
 		useHistoryRenderer((renderer) => renderer.setCamera({
 			x: camera.x,
 			y: camera.y,
 			scale: camera.scale,
-			centerX: innerWidth / 2,
+			centerX: viewport.centerX,
 			centerY: viewport.centerY,
-			viewportWidth: innerWidth,
+			viewportWidth: viewport.width,
 			viewportHeight: viewport.height,
 		}));
 		scheduleFallbackRefresh();
@@ -2609,137 +2848,345 @@ function detailSelectionMatches(selection, streamId, itemId) {
 
 function currentDetailItem() {
 	if (!detailSelection || !currentPayload) return null;
-	const detailItemId = detailSelection.itemId;
-	if (!detailSelectionMatches(detailSelection, selectedStreamId, detailItemId)) return null;
-  const timeline = timelineFrom(currentPayload);
-  const item = timeline.history.find((entry) => itemKey(entry) === detailItemId);
-  if (!item) return null;
-  const active = (timeline.activeIds || []).map(String).includes(detailItemId);
-  const pending = (timeline.pendingIds || []).map(String).includes(detailItemId) || Boolean(item.pending);
-  const summary = Boolean(item.synthetic)
-    || (timeline.summaryEdges || []).some((edge) => String(edge.to) === detailItemId);
-  return { ...item, active, pending, summary };
+	const id = detailSelection.itemId;
+	if (!detailSelectionMatches(detailSelection, selectedStreamId, id)) return null;
+	if (detailOverride) return detailOverride;
+	const item = historyById.get(id);
+	if (!item) return null;
+	return { ...item, active: currentActiveIds.has(id), pending: currentPendingIds.has(id) || Boolean(item.pending),
+		summary: Boolean(item.synthetic) || currentSummarySources.has(id) };
 }
 
 function detailState(item) {
-  if (item.pending) return "awaiting context";
-  if (item.active) return "in current context";
-  return "outside current context";
+	return sceneEngine.contentState(item);
 }
 
-function prettyJson(value) {
-  try {
-    return JSON.stringify(JSON.parse(value), null, 2);
-  } catch (_) {
-    return value;
-  }
+function cancelBackgroundWork() {
+	sceneJobGeneration += 1;
+	pendingScene = null;
+	preparedLayout = null;
+	layoutWorker.cancel();
+	indexAbort?.abort();
+	indexAbort = null;
+	indexGeneration += 1;
+	indexBusy = false;
+	contentIndex.cancelPendingReconcile();
+	viewport.dataset.sceneBusy = "false";
+	viewport.setAttribute("aria-busy", "false");
+	$("#work-status").hidden = true;
+}
+function syncWorkStatus() {
+	const retention = currentPayload?.timeline?.retention;
+	const parts = [];
+	if (pendingScene) parts.push("Updating layout…");
+	if (indexBusy) parts.push("Indexing newest excerpts…");
+	if (retention?.evictedItems) parts.push(`${retention.retainedItems.toLocaleString()} history retained · ${retention.evictedItems.toLocaleString()} older records removed`);
+	if (retention?.overBudget) parts.push("Active / pending content exceeds history budget; protected from eviction");
+	const status = $("#work-status"), text = parts.join(" · ");
+	if (status.textContent === text && status.hidden === !text) return;
+	status.textContent = text;
+	status.title = text;
+	status.hidden = !text;
+	syncGraphViewport();
+	if (currentSceneLayout && !freeCamera) fitView(false);
+}
+function startContentIndex(items) {
+	indexAbort?.abort();
+	const generation = ++indexGeneration;
+	searchGeneration += 1;
+	if (searchTimer !== null) clearTimeout(searchTimer);
+	if (items.length < BACKGROUND_ITEM_THRESHOLD) {
+		indexBusy = false;
+		contentIndex.reconcile(items);
+		syncWorkStatus();
+		return;
+	}
+	const controller = new AbortController();
+	indexAbort = controller;
+	indexBusy = true;
+	$("#search-list").replaceChildren();
+	$("#search-note").textContent = "Indexing newest excerpts…";
+	syncWorkStatus();
+	const started = performance.now();
+	contentIndex.reconcileAsync(items, { signal: controller.signal, maxItemsPerSlice: 128, timeBudgetMs: 6 }).then((result) => {
+		if (generation !== indexGeneration || !result.committed) return;
+		indexBusy = false;
+		indexAbort = null;
+		viewStats.indexMs = performance.now() - started;
+		syncWorkStatus();
+		if ($("#search-input").value.trim()) scheduleSearch();
+	}).catch((error) => {
+		if (generation !== indexGeneration || controller.signal.aborted) return;
+		indexBusy = false;
+		contentIndex.clear();
+		syncWorkStatus();
+		$("#search-note").textContent = "Index unavailable; reopen the view to retry";
+		console.error("ContextRail index failed", error);
+	});
+}
+function updateViewData(timeline) {
+	const historyChanged = lastHistoryReference !== timeline.history;
+	const membershipChanged = !lastIndexedTimeline || !sceneEngine.sameOrderedIds(lastIndexedTimeline.activeIds, timeline.activeIds) || !sceneEngine.sameOrderedIds(lastIndexedTimeline.pendingIds, timeline.pendingIds);
+	if (historyChanged) {
+		lastHistoryReference = timeline.history;
+		historyById = new Map(timeline.history.map((item) => [itemKey(item), item]));
+		startContentIndex(timeline.history);
+	}
+	if (!lastIndexedTimeline || !sceneEngine.sameOrderedIds(lastIndexedTimeline.activeIds, timeline.activeIds)) {
+		currentActiveIds = new Set(timeline.activeIds || []);
+	}
+	if (!lastIndexedTimeline || !sceneEngine.sameOrderedIds(lastIndexedTimeline.pendingIds, timeline.pendingIds)) {
+		currentPendingIds = new Set(timeline.pendingIds || []);
+	}
+	if (!lastIndexedTimeline || lastIndexedTimeline.summaryEdges !== timeline.summaryEdges) {
+		currentSummarySources = new Map();
+		for (const edge of timeline.summaryEdges || []) {
+			const sources = currentSummarySources.get(String(edge.to)) || [];
+			sources.push(String(edge.from));
+			currentSummarySources.set(String(edge.to), sources);
+		}
+	}
+	if (historyChanged || membershipChanged) {
+		// Active order comes from the capture, not the historical insertion order.
+		detailOrder = [...new Set([...(timeline.activeIds || []), ...(timeline.pendingIds || []), ...historyById.keys()])];
+		detailOrderPositions = new Map(detailOrder.map((id, index) => [id, index]));
+	}
+	lastIndexedTimeline = timeline;
+	if (historyChanged && $("#search-input").value.trim()) scheduleSearch();
 }
 
-function appendDetailBlock(item, block, index, modelRole) {
-  const section = document.createElement("section");
-  section.className = "detail-block";
-  section.dataset.type = block.type;
-  const label = document.createElement("span");
-  label.className = "detail-block-label";
-  section.appendChild(label);
-
-  if (block.type === "image") {
-	label.textContent = `${modelRole} - Image ${index + 1} - ${block.mimeType}`;
-    if (/^image\/[a-z0-9.+-]+$/i.test(block.mimeType) && typeof block.data === "string") {
-      const image = document.createElement("img");
-      image.alt = `${item.kind} context image`;
-      image.loading = "lazy";
-      image.src = `data:${block.mimeType};base64,${block.data}`;
-      section.appendChild(image);
-    }
-  } else {
-    const text = document.createElement("pre");
-	if (block.type === "toolCall") {
-	  label.textContent = `${modelRole} - Tool call - ${block.name}`;
-      text.textContent = prettyJson(block.argumentsJson);
-	} else if (block.type === "thinking") {
-	  label.textContent = block.redacted
-	    ? `${modelRole} - Thinking - redacted`
-	    : `${modelRole} - Thinking`;
-      text.textContent = block.text;
-	} else {
-	  label.textContent = item.kind === "system"
-	    ? `${modelRole} - System prompt`
-	    : `${modelRole} - Content`;
-      text.textContent = block.text;
-    }
-    section.appendChild(text);
-  }
-  detailContent.appendChild(section);
+function clearSearch() {
+	searchGeneration += 1;
+	if (searchTimer !== null) clearTimeout(searchTimer);
+	searchTimer = null;
+	$("#search-input").value = "";
+	$("#search-clear").hidden = true;
+	$("#search-results").hidden = true;
+	$("#search-list").replaceChildren();
 }
+function scheduleSearch() {
+	const generation = ++searchGeneration;
+	if (searchTimer !== null) clearTimeout(searchTimer);
+	const query = $("#search-input").value.trim();
+	$("#search-clear").hidden = !query;
+	$("#search-results").hidden = !query;
+	if (!query) { $("#search-list").replaceChildren(); return; }
+	$("#search-note").textContent = "Searching indexed excerpts…";
+	searchTimer = setTimeout(() => runSearch(query, generation), 120);
+}
+async function runSearch(query, generation) {
+	if (indexBusy) { $("#search-note").textContent = "Indexing newest excerpts…"; return; }
+	const start = performance.now();
+	const results = [];
+	let cursor = 0;
+	let complete = false;
+	let revision;
+	while (!complete && results.length < 40) {
+		if (generation !== searchGeneration) return;
+		const page = contentIndex.search(query, { cursor, limit: 40 - results.length, scanLimit: 1000 });
+		if (revision !== undefined && revision !== page.revision) return;
+		revision = page.revision;
+		results.push(...page.results);
+		complete = page.complete;
+		cursor = page.nextCursor;
+		if (!complete && results.length < 40) await new Promise((resolve) => setTimeout(resolve, 0));
+	}
+	if (generation !== searchGeneration) return;
+	viewStats.searchMs = performance.now() - start;
+	lastSearchRevision = revision;
+	const list = $("#search-list");
+	list.replaceChildren();
+	for (const result of results) {
+		const row = document.createElement("button");
+		row.type = "button";
+		row.className = "result-row";
+		const title = document.createElement("strong");
+		title.textContent = result.content.title;
+		const excerpt = document.createElement("small");
+		excerpt.textContent = result.excerpt || result.content.preview;
+		row.append(title, excerpt);
+		row.addEventListener("click", () => {
+			$("#search-results").hidden = true;
+			openDetailById(result.id);
+			focusItemById(result.id);
+		});
+		list.append(row);
+	}
+	const indexed = contentIndex.diagnostics().indexedItems;
+	$("#search-note").textContent = (results.length ? String(results.length) + (complete ? " matches" : "+ matches · showing first 40") : "No matches")
+		+ " · indexed excerpts only · " + indexed.toLocaleString() + " / " + historyById.size.toLocaleString() + " items";
+}
+$("#search-input").addEventListener("input", scheduleSearch);
+$("#search-input").addEventListener("focus", () => { if ($("#search-input").value.trim()) $("#search-results").hidden = false; });
+$("#search-clear").addEventListener("click", () => { clearSearch(); $("#search-input").focus(); });
 
-function syncDetailPanel() {
-  const item = currentDetailItem();
-  if (!item) {
-    closeDetail();
-    return;
-  }
-  const meta = kindMeta[item.kind] || kindMeta.unknown;
-  const text = nodeText(item, item.order || 0);
-  detailPanel.style.setProperty("--detail-color", meta.color);
-  $("#detail-kind").textContent = `${text.kind} - OMP model context`;
-  $("#detail-title").textContent = text.title;
-  $("#detail-state").textContent = detailState(item);
-  detailContent.replaceChildren();
-
-	const modelMessages = Array.isArray(item.detail?.modelMessages)
-	  ? item.detail.modelMessages
-	  : [];
-	const roles = [...new Set(modelMessages.map((message) => message.modelRole).filter(Boolean))];
-	$("#detail-role").textContent = roles.join(" + ") || meta.label.toLowerCase();
-	const blockCount = modelMessages.reduce(
-	  (count, message) => count + (Array.isArray(message.blocks) ? message.blocks.length : 0),
-	  0,
-	);
-	if (blockCount === 0) {
-    const empty = document.createElement("p");
-    empty.id = "detail-empty";
-    empty.textContent = item.pending
-      ? "Not yet confirmed by an OMP context event."
-      : "No displayable content was exposed for this item.";
-    detailContent.appendChild(empty);
-	return;
-  }
-	let blockIndex = 0;
-	for (const message of modelMessages) {
-	  if (!Array.isArray(message.blocks)) continue;
-	  for (const block of message.blocks) {
-	    appendDetailBlock(item, block, blockIndex, message.modelRole);
-	    blockIndex += 1;
-	  }
+function syncInspectorModality() {
+	const open = Boolean(detailSelection);
+	const modal = open && isMobileLayout();
+	detailPanel.inert = !open;
+	detailPanel.setAttribute("role", modal ? "dialog" : "region");
+	if (modal) detailPanel.setAttribute("aria-modal", "true");
+	else detailPanel.removeAttribute("aria-modal");
+	for (const element of [viewport, $("#topbar"), $("#legend"), sessionBar, workspaceBar, captureBar, statusBar, $("#work-status")]) element.inert = modal;
+}
+function refreshInspectorGeometry() {
+	syncInspectorModality();
+	syncGraphViewport();
+	requestAnimationFrame(() => {
+		if (!currentPayload) return;
+		applyPayload(livePayload || currentPayload, false);
+		if (!freeCamera) fitView(false);
+		markCameraDirty();
+	});
+}
+function syncSelectionMarkers() {
+	const selection = $("#history-selection");
+	const id = detailSelection?.itemId;
+	selection.hidden = !id || nodes.has(id) || !currentSceneLayout?.placements.has(id);
+	if (!selection.hidden) {
+		const point = displayPoint(id, currentActiveIds, currentPendingIds);
+		const dimensions = nodeDimensions();
+		selection.style.width = `${dimensions.width + 10}px`;
+		selection.style.height = `${dimensions.height + 10}px`;
+		selection.style.transform = `translate(${point.x - dimensions.width / 2 - 5}px, ${point.y - dimensions.height / 2 - 5}px)`;
+	}
+	for (const node of nodes.values()) {
+		const selected = detailSelectionMatches(detailSelection, selectedStreamId, node.key);
+		node.element.classList.toggle("selected", selected);
+		node.element.setAttribute("aria-pressed", String(selected));
 	}
 }
-
-function openDetailById(itemId) {
-	if (!selectedStreamId) return;
-	detailSelection = { streamId: selectedStreamId, itemId };
-  hideTooltip();
-  syncDetailPanel();
-  document.body.dataset.detailOpen = "true";
-  detailPanel.setAttribute("aria-hidden", "false");
-  $("#detail-close").focus({ preventScroll: true });
+function syncDetailPanel(force = false) {
+	const item = currentDetailItem();
+	if (!item) { closeDetail(); return; }
+	const changed = detailDisplayedItem && (
+		detailDisplayedItem.id !== item.id || detailDisplayedItem.detail !== item.detail
+		|| detailDisplayedItem.kind !== item.kind || detailDisplayedItem.toolName !== item.toolName
+		|| Boolean(detailDisplayedItem.synthetic) !== Boolean(item.synthetic));
+	// Losing content must clear an older visible body immediately, never keep stale sensitive text.
+	const unavailable = !item.detail?.modelMessages?.length || item.synthetic
+		|| (changed && !item.detail.modelMessages.some((message) => message.blocks.length));
+	const render = force || !detailDisplayedItem || (changed && unavailable);
+	$("#detail-update").hidden = !changed || render;
+	if (render) {
+		detailDisplayedItem = item;
+		sceneEngine.renderInspectorContent(detailContent, item, detailMode);
+		viewStats.inspectorRenders += 1;
+		detailContent.scrollTop = 0;
+		if (detailBefore) {
+			const comparison = document.createElement("details");
+			const label = document.createElement("summary");
+			label.textContent = "Before · previous captured version";
+			const body = document.createElement("div");
+			comparison.append(label, body);
+			let loaded = false;
+			comparison.addEventListener("toggle", () => {
+				if (!comparison.open || loaded) return;
+				loaded = true;
+				sceneEngine.renderInspectorContent(body, detailBefore, detailMode);
+				body.querySelector("#detail-provenance")?.removeAttribute("id");
+			});
+			detailContent.prepend(comparison);
+		}
+	}
+	const shown = detailDisplayedItem || item;
+	const content = sceneEngine.projectContent(shown);
+	const meta = kindMeta[item.kind] || kindMeta.unknown;
+	detailPanel.style.setProperty("--detail-color", meta.color);
+	$("#detail-kind").textContent = (item.synthetic ? "Event" : meta.label) + " · captured model context";
+	$("#detail-title").textContent = content.title;
+	$("#detail-state").textContent = detailOverride?.diffStatus === "exited" ? "Exited between captures" : detailState(item);
+	$("#detail-role").textContent = content.modelRoles.join(" + ") || "not exposed";
+	const index = detailOrderPositions.get(item.id);
+	$("#detail-prev").disabled = Boolean(detailOverride) || index === undefined || index === 0;
+	$("#detail-next").disabled = Boolean(detailOverride) || index === undefined || index >= detailOrder.length - 1;
+	$("#reader-count").textContent = detailOverride ? "Capture comparison" : index === undefined ? "" : String(index + 1) + " / " + detailOrder.length;
+	$("#detail-read").setAttribute("aria-pressed", String(detailMode === "read"));
+	$("#detail-raw").setAttribute("aria-pressed", String(detailMode === "original"));
 }
-
+function openDetailById(itemId, override = null, before = null) {
+	if (!selectedStreamId || (!override && !historyById.has(itemId))) return;
+	const wasOpen = Boolean(detailSelection);
+	if (!wasOpen) detailReturnFocus = document.activeElement;
+	detailOverride = override;
+	detailBefore = before;
+	detailDisplayedItem = null;
+	detailSelection = { streamId: selectedStreamId, itemId };
+	hideTooltip();
+	document.body.dataset.detailOpen = "true";
+	detailPanel.setAttribute("aria-hidden", "false");
+	syncInspectorModality();
+	syncDetailPanel(true);
+	syncSelectionMarkers();
+	if (!wasOpen) {
+		refreshInspectorGeometry();
+		$("#detail-close").focus({ preventScroll: true });
+	}
+}
+function focusItemById(itemId) {
+	const placement = currentSceneLayout?.placements.get(itemId);
+	if (!placement) return;
+	const point = displayPoint(itemId, currentActiveIds, currentPendingIds);
+	freeCamera = true;
+	cameraTarget = constrainCamera({ x: point.x, y: point.y, scale: Math.max(0.85, cameraTarget.scale) }, true);
+	markCameraDirty();
+}
 function openDetail(node) {
-	if (!node.item.active && !node.item.pending) travelToHistory(node.key);
+	if (pendingScene) return;
 	openDetailById(node.key);
 }
-
 function closeDetail() {
+	const wasOpen = Boolean(detailSelection);
 	detailSelection = null;
-  document.body.dataset.detailOpen = "false";
-  detailPanel.setAttribute("aria-hidden", "true");
+	detailDisplayedItem = null;
+	detailOverride = null;
+	detailBefore = null;
+	document.body.dataset.detailOpen = "false";
+	detailPanel.setAttribute("aria-hidden", "true");
 	detailContent.replaceChildren();
+	syncInspectorModality();
+	syncSelectionMarkers();
+	if (wasOpen) {
+		if (detailReturnFocus?.isConnected) detailReturnFocus.focus({ preventScroll: true });
+		refreshInspectorGeometry();
+	}
 }
+$("#detail-update").addEventListener("click", () => syncDetailPanel(true));
+for (const [id, mode] of [["detail-read", "read"], ["detail-raw", "original"]]) {
+	$("#" + id).addEventListener("click", () => { detailMode = mode; syncDetailPanel(true); });
+}
+for (const [id, offset] of [["detail-prev", -1], ["detail-next", 1]]) {
+	$("#" + id).addEventListener("click", () => {
+		const index = detailOrderPositions.get(detailSelection?.itemId);
+		const target = detailOrder[(index ?? -1) + offset];
+		if (target) { openDetailById(target); focusItemById(target); }
+	});
+}
+$("#detail-copy").addEventListener("click", async () => {
+	if (!detailDisplayedItem) return;
+	const button = $("#detail-copy");
+	try {
+		await navigator.clipboard.writeText(sceneEngine.copyableContextText(detailDisplayedItem));
+		button.textContent = "Copied captured text";
+	} catch (_) { button.textContent = "Copy unavailable"; }
+	setTimeout(() => { button.textContent = "Copy text"; }, 1800);
+});
 
 detailBackdrop.addEventListener("click", closeDetail);
 $("#detail-close").addEventListener("click", closeDetail);
 addEventListener("keydown", (event) => {
+	if (event.key === "Tab" && detailSelection && isMobileLayout()) {
+		const focusable = [...detailPanel.querySelectorAll('button:not(:disabled):not([hidden]), summary, [tabindex="0"]')].filter((node) => node.getClientRects().length);
+		const first = focusable[0], last = focusable[focusable.length - 1];
+		if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+		else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+		return;
+	}
+	if (event.key === "Escape" && !$("#search-results").hidden) {
+		$("#search-results").hidden = true;
+		$("#search-input").focus();
+		return;
+	}
 	if (event.key === "Escape" && detailSelection) {
 		closeDetail();
 		return;
@@ -2761,7 +3208,7 @@ function screenToWorld(screenX, screenY, sourceCamera = camera) {
 	return sceneEngine.screenPointToWorld(
 		{ x: screenX, y: screenY },
 		sourceCamera,
-		{ x: innerWidth / 2, y: viewportBounds.centerY },
+		{ x: viewportBounds.centerX, y: viewportBounds.centerY },
 	);
 }
 
@@ -2770,7 +3217,7 @@ function worldToScreen(worldX, worldY, sourceCamera = camera) {
 	return sceneEngine.worldPointToScreen(
 		{ x: worldX, y: worldY },
 		sourceCamera,
-		{ x: innerWidth / 2, y: viewportBounds.centerY },
+		{ x: viewportBounds.centerX, y: viewportBounds.centerY },
 	);
 }
 
@@ -2780,7 +3227,7 @@ function cameraAtScreenPoint(worldPoint, screenX, screenY, scale) {
 		worldPoint,
 		{ x: screenX, y: screenY },
 		scale,
-		{ x: innerWidth / 2, y: viewportBounds.centerY },
+		{ x: viewportBounds.centerX, y: viewportBounds.centerY },
 	);
 }
 
@@ -2794,7 +3241,7 @@ function travelToEpoch(epochIndex) {
 	cameraTarget = {
 		x: epoch.bounds.x + epoch.bounds.width / 2,
 		y: epoch.bounds.y + epoch.bounds.height / 2,
-		scale: fitScaleForBounds(epoch.bounds),
+		scale: cameraTarget.scale,
 	};
 	markCameraDirty();
 	return true;
@@ -2883,6 +3330,7 @@ function beginPan(x, y) {
 }
 
 viewport.addEventListener("pointerdown", (event) => {
+	if (pendingScene) return;
   hideTooltip();
 	const historyVisual = historyVisualAt(event.clientX, event.clientY);
 	if (historyVisual && touches.size === 0) {
@@ -3017,48 +3465,213 @@ viewport.addEventListener("wheel", (event) => {
   markCameraDirty();
 }, { passive: false });
 
-function updateChrome(payload) {
-  const snapshot = payload.snapshot;
-	const timeline = timelineFrom(payload);
-  document.body.dataset.phase = payload.phase || "idle";
-  $("#phase").textContent = payload.activeTools && payload.activeTools.length
-    ? payload.activeTools.join(", ")
-    : payload.phase || "idle";
-  $("#model").textContent = snapshot && snapshot.model ? snapshot.model : "no model";
-	$("#item-count").textContent = `${timeline.activeIds.length} / ${timeline.history.length}`;
-
-  const percent = snapshot && Number.isFinite(snapshot.percent) ? Math.min(100, snapshot.percent) : 0;
-  const fill = $("#usage-fill");
-  fill.style.width = `${percent}%`;
-  fill.dataset.level = percent >= 90 ? "critical" : percent >= 72 ? "high" : "normal";
-  $("#usage-track").setAttribute("aria-valuenow", String(Math.round(percent)));
-  $("#usage-value").textContent = snapshot
-    ? `${formatTokens(snapshot.tokens)} / ${formatTokens(snapshot.contextWindow)} - ${Math.round(percent)}%`
-    : "? / ?";
+function captureDescription(entry) {
+	const time = new Date(entry.capturedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+	return time + " · " + entry.itemCount + " items · " + (entry.source === "session-reconstruction" ? "session reconstruction" : "context hook");
 }
-
+function syncCaptureControls() {
+	const archive = frozenCapture?.archive || livePayload?.captures;
+	const entries = archive?.entries || [];
+	const selected = frozenCapture?.entry;
+	const liveArchive = livePayload?.captures;
+	const key = String(liveArchive?.revision ?? -1) + ":" + (selected?.id || "live");
+	if (lastCaptureOptionsKey === key && lastCaptureArchive === liveArchive) return;
+	lastCaptureOptionsKey = key;
+	lastCaptureArchive = liveArchive;
+	const select = $("#capture-select");
+	select.replaceChildren(new Option("Live context", "live"));
+	for (const entry of [...(liveArchive?.entries || [])].reverse()) select.append(new Option(captureDescription(entry), entry.id));
+	if (selected && !(liveArchive?.entries || []).some((entry) => entry.id === selected.id)) select.append(new Option(captureDescription(selected) + " · held view", selected.id));
+	select.value = selected?.id || "live";
+	select.disabled = !selected && !(liveArchive?.entries.length);
+	$("#return-live").textContent = selected ? "Return to latest ↗" : "Latest ↗";
+	$("#return-live").disabled = !selected;
+	const latest = liveArchive?.entries.at(-1);
+	$("#capture-label").textContent = selected
+		? (selected.contentStatus === "omitted" ? "Content omitted · archive byte limit" : "Frozen capture · " + (selected.reason || selected.source)) + (latest?.id !== selected.id ? " · newer capture available" : "")
+		: latest ? "Latest observed context · " + captureDescription(latest) : "Capture history not available from this source";
+	const after = selected || entries.at(-1);
+	const index = after ? entries.findIndex((entry) => entry.id === after.id) : -1;
+	const before = entries[index - 1];
+	captureChanges = archive ? sceneEngine.compareCaptures(archive, before, after) : undefined;
+	const button = $("#changes-open");
+	button.disabled = captureChanges === undefined;
+	if (captureChanges === undefined) button.textContent = before ? "Diff unavailable" : "No earlier capture";
+	else {
+		const count = (status) => captureChanges.filter((change) => change.status === status).length;
+		button.textContent = "+" + count("entered") + " −" + count("exited") + " ~" + count("changed") + " changes";
+	}
+	$("#change-list").hidden = true;
+	button.setAttribute("aria-expanded", "false");
+}
+function showCapture(id) {
+	const payload = livePayload;
+	if (!payload || !selectedStreamId || !sessionStates.has(selectedStreamId)) return;
+	const archive = payload.captures;
+	const entry = archive?.entries.find((entry) => entry.id === id);
+	if (id !== "live" && !entry) return;
+	clearGraph();
+	frozenCapture = entry ? { entry, archive, state: sceneEngine.captureRenderState(archive, entry) } : null;
+	lastCaptureOptionsKey = null;
+	freeCamera = false;
+	applyPayload(payload, false, true);
+	fitView(false);
+}
+function renderCaptureChanges() {
+	const list = $("#change-list");
+	list.replaceChildren();
+	if (!captureChanges) return;
+	const changes = captureChanges;
+	const note = document.createElement("p");
+	note.textContent = "Compared with the preceding retained capture. Membership and content versions; not model-call IDs.";
+	list.append(note);
+	let offset = 0;
+	const more = document.createElement("button");
+	more.type = "button";
+	more.className = "load-more";
+	more.textContent = "Load more changes";
+	const append = () => {
+		for (const change of changes.slice(offset, offset + 60)) {
+			const version = change.after || change.before;
+			const row = document.createElement("button");
+			row.type = "button";
+			row.className = "result-row";
+			const title = document.createElement("strong");
+			title.textContent = ({ entered: "+ Entered · ", exited: "− Exited · ", changed: "~ Changed · " })[change.status] + sceneEngine.projectContent(version).title;
+			row.append(title);
+			row.addEventListener("click", () => {
+				list.hidden = true;
+				$("#changes-open").setAttribute("aria-expanded", "false");
+				openDetailById(change.id, { ...version, active: change.status !== "exited", pending: false, diffStatus: change.status }, change.status === "changed" ? change.before : null);
+			});
+			list.insertBefore(row, more);
+		}
+		offset += 60;
+		more.hidden = offset >= changes.length;
+	};
+	list.append(more);
+	more.addEventListener("click", append);
+	append();
+	if (!changes.length) { const empty = document.createElement("p"); empty.textContent = "No membership or content changes."; list.append(empty); }
+}
+$("#capture-select").addEventListener("change", (event) => showCapture(event.target.value));
+$("#return-live").addEventListener("click", () => showCapture("live"));
+$("#changes-open").addEventListener("click", () => {
+	const list = $("#change-list");
+	const open = list.hidden;
+	if (open) renderCaptureChanges();
+	list.hidden = !open;
+	$("#changes-open").setAttribute("aria-expanded", String(open));
+});
+function updateChrome(payload) {
+	const snapshot = payload.snapshot;
+	const timeline = timelineFrom(payload);
+	document.body.dataset.phase = payload.phase || "idle";
+	$("#phase").textContent = frozenCapture ? "capture" : payload.activeTools?.length ? payload.activeTools.join(", ") : payload.phase || "idle";
+	$("#model").textContent = snapshot?.model || "no model";
+	$("#item-count").textContent = frozenCapture?.entry.contentStatus === "omitted" ? frozenCapture.entry.itemCount + " / unavailable" : timeline.activeIds.length + " / " + timeline.history.length;
+	const known = Number.isFinite(snapshot?.percent);
+	const percent = known ? Math.max(0, Math.min(100, snapshot.percent)) : 0;
+	const fill = $("#usage-fill");
+	fill.style.width = String(percent) + "%";
+	fill.dataset.level = percent >= 90 ? "critical" : percent >= 72 ? "high" : "normal";
+	const track = $("#usage-track");
+	if (known) track.setAttribute("aria-valuenow", String(Math.round(percent)));
+	else track.removeAttribute("aria-valuenow");
+	track.setAttribute("aria-valuetext", known ? Math.round(percent) + "%" : "Usage unavailable");
+	$("#usage-value").textContent = snapshot ? formatTokens(snapshot.tokens) + " / " + formatTokens(snapshot.contextWindow) + (known ? " · " + Math.round(percent) + "%" : " · usage unknown") : "? / ?";
+}
 function reconciliationDimensionsKey() {
 	const dimensions = nodeDimensions();
-	return `${dimensions.width}:${dimensions.height}:${isShortLandscapeLayout()}:${isMobileLayout()}`;
+	return dimensions.width + ":" + dimensions.height + ":" + isShortLandscapeLayout() + ":" + isMobileLayout() + ":" + Math.round(graphWidth());
 }
-
+function commitScene(timeline, animateNew, dimensionsKey) {
+	const start = performance.now();
+	if (!reconcileNodes(timeline, animateNew)) return;
+	lastReconciledTimeline = timeline;
+	lastReconciledMode = viewMode;
+	lastReconciledRendererState = historyRendererState;
+	lastReconciledDimensions = dimensionsKey;
+	viewStats.reconciliations += 1;
+	viewStats.reconcileMs = performance.now() - start;
+	viewStats.maxReconcileMs = Math.max(viewStats.maxReconcileMs, viewStats.reconcileMs);
+	syncSelectionMarkers();
+}
+async function prepareScene(timeline, animateNew, dimensionsKey) {
+	if (pendingScene && sceneEngine.sameSceneTimeline(pendingScene.timeline, timeline) && pendingScene.dimensionsKey === dimensionsKey) return;
+	const job = { id: ++sceneJobGeneration, timeline, dimensionsKey, streamId: selectedStreamId };
+	pendingScene = job;
+	viewport.dataset.sceneBusy = "true";
+	viewport.setAttribute("aria-busy", "true");
+	syncWorkStatus();
+	const dimensions = nodeDimensions();
+	const options = { nodeWidth: dimensions.width, nodeHeight: dimensions.height, compact: isShortLandscapeLayout(), mobile: isMobileLayout(), focusColumns: focusGridColumns(graphWidth()) };
+	const started = performance.now();
+	let layout;
+	try {
+		layout = await layoutWorker.run(selectedStreamId + "|" + (frozenCapture?.entry.id || "live"), timeline, options);
+		if (!layout) return;
+		viewStats.workerJobs = (viewStats.workerJobs || 0) + 1;
+	} catch (error) {
+		if (pendingScene !== job) return;
+		workerFallback = true;
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		if (pendingScene !== job) return;
+		try { layout = sceneEngine.buildSceneLayout(timeline, options, sessionLayouts.get(selectedStreamId)?.layout); }
+		catch (failure) {
+			pendingScene = null;
+			viewport.dataset.sceneBusy = "false";
+			viewport.setAttribute("aria-busy", "false");
+			syncWorkStatus();
+			console.error("ContextRail layout failed", failure);
+			return;
+		}
+	}
+	if (pendingScene !== job || selectedStreamId !== job.streamId || !currentPayload) return;
+	const latestTimeline = timelineFrom(currentPayload);
+	if (!sceneEngine.sameSceneTimeline(timeline, latestTimeline) || dimensionsKey !== reconciliationDimensionsKey()) {
+		pendingScene = null;
+		applyPayload(livePayload || currentPayload, false);
+		return;
+	}
+	viewStats.workerMs = performance.now() - started;
+	preparedLayout = { timeline: latestTimeline, layout,
+		dimensionsKey: [dimensions.width, dimensions.height, options.focusColumns, options.compact, options.mobile].join(":") };
+	try { commitScene(latestTimeline, animateNew, dimensionsKey); }
+	catch (error) { console.error("ContextRail scene commit failed", error); }
+	finally {
+		pendingScene = null;
+		viewport.dataset.sceneBusy = "false";
+		viewport.setAttribute("aria-busy", "false");
+		syncWorkStatus();
+	}
+}
 function applyPayload(payload, animateNew = false, force = false) {
-  currentPayload = payload;
-  updateChrome(payload);
-	const timeline = timelineFrom(payload);
-	$("#empty-state").classList.toggle("hidden", timeline.history.length > 0);
+	if (payload !== frozenCapture?.state) livePayload = payload;
+	currentPayload = frozenCapture?.state || payload;
+	updateChrome(currentPayload);
+	syncCaptureControls();
+	const timeline = timelineFrom(currentPayload);
+	updateViewData(timeline);
+	syncWorkStatus();
+	const empty = $("#empty-state");
+	empty.classList.toggle("hidden", timeline.history.length > 0);
+	empty.setAttribute("aria-hidden", String(timeline.history.length > 0));
+	empty.textContent = frozenCapture?.entry.contentStatus === "omitted" ? "Capture content unavailable · archive byte limit exceeded" : frozenCapture && frozenCapture.entry.itemCount && !timeline.history.length ? "Capture content unavailable · missing versions" : "waiting for context";
 	const dimensionsKey = reconciliationDimensionsKey();
 	const needsReconcile = force
-		|| timeline !== lastReconciledTimeline
+		|| !sceneEngine.sameSceneTimeline(lastReconciledTimeline, timeline)
 		|| viewMode !== lastReconciledMode
 		|| historyRendererState !== lastReconciledRendererState
 		|| dimensionsKey !== lastReconciledDimensions;
 	if (needsReconcile) {
-		if (reconcileNodes(timeline, animateNew)) {
-			lastReconciledTimeline = timeline;
-			lastReconciledMode = viewMode;
-			lastReconciledRendererState = historyRendererState;
-			lastReconciledDimensions = dimensionsKey;
+		if (timeline.history.length >= BACKGROUND_ITEM_THRESHOLD) void prepareScene(timeline, animateNew, dimensionsKey);
+		else {
+			if (pendingScene) { pendingScene = null; layoutWorker.cancel(); preparedLayout = null; }
+			viewport.dataset.sceneBusy = "false";
+			viewport.setAttribute("aria-busy", "false");
+			commitScene(timeline, animateNew, dimensionsKey);
+			syncWorkStatus();
 		}
 	}
 	if (detailSelection) syncDetailPanel();
@@ -3088,6 +3701,7 @@ sessionTabs.addEventListener("keydown", (event) => {
   next.focus();
 });
 addEventListener("resize", () => {
+	syncInspectorModality();
 	syncGraphViewport();
 	useHistoryRenderer((renderer) => renderer.resize(innerWidth, innerHeight));
   if (currentPayload) applyPayload(currentPayload);
@@ -3353,6 +3967,8 @@ globalThis.__contextRail = {
 					: Math.max(0, Math.round(performance.now() - renderStats.sleepingSince)),
 			},
 			phase: document.body.dataset.phase,
+			content: { ...contentIndex.diagnostics(), ...viewStats, indexBusy, sceneBusy: Boolean(pendingScene), workerFallback },
+			capture: { selected: frozenCapture?.entry.id || null, retained: livePayload?.captures?.entries.length || 0, contentStatus: frozenCapture?.entry.contentStatus || null },
 			frame: { ...frameTarget },
 		};
 	},

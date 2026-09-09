@@ -20,6 +20,7 @@ import {
 } from "./hub-discovery.ts";
 import type { RenderState } from "./render.ts";
 import type { ContextRailViewer } from "./server.ts";
+import { captureRenderStateForTransport } from "./immutable-state.ts";
 
 export interface ConnectContextRailHubOptions {
 	processId: string;
@@ -292,7 +293,7 @@ export async function connectContextRailHub(
 	let stopping = false;
 	let stopPromise: Promise<void> | undefined;
 
-	const captureState = (state: RenderState): RenderState => structuredClone(state);
+	const captureState = captureRenderStateForTransport;
 	const acknowledgedStream = (streamId: string): AcknowledgedStream | undefined => {
 		const acknowledged = acknowledgedStreams.get(streamId);
 		if (!acknowledged) return undefined;
@@ -357,7 +358,9 @@ export async function connectContextRailHub(
 	};
 
 	const publishQueuedState = async (streamId: string, queued: PendingState): Promise<void> => {
-		const target = captureState(queued.state);
+		// Enqueue already captured an immutable, defensive handoff. Cloning it
+		// again here would copy every retained live detail a second time.
+		const target = queued.state;
 		for (let attempt = 0; attempt < 4; attempt += 1) {
 			const acknowledged = acknowledgedStream(streamId);
 			const baseVersion = acknowledged?.version ?? 0;

@@ -1,5 +1,5 @@
 import "pixi.js/unsafe-eval";
-import { Application, Container, Graphics, Text } from "pixi.js";
+import { Application, CanvasTextMetrics, Container, Graphics, Text } from "pixi.js";
 
 export interface HistoryNodeVisual {
 	id: string;
@@ -80,6 +80,8 @@ interface LabelCacheEntry {
 	title: string;
 	detail: string;
 	color: number;
+	width: number;
+	height: number;
 }
 
 const DETAIL_LOD_SCALE = 0.48;
@@ -148,6 +150,25 @@ export function edgeIntersectsBounds(
 function clampText(value: string, maximum: number): string {
 	if (value.length <= maximum) return value;
 	return `${value.slice(0, Math.max(1, maximum - 1))}…`;
+}
+
+/** Fit bounded label input in actual pixels; character counts alone overflow CJK/wide fonts. */
+export function fitHistoryLabel(value: string, width: number, measure: (text: string) => number): string {
+	if (!Number.isFinite(width) || width <= 0) return "";
+	const clipped = value.length > 256;
+	let bounded = value.slice(0, 256);
+	if (bounded.length < value.length && /[\uD800-\uDBFF]$/u.test(bounded)) bounded = bounded.slice(0, -1);
+	bounded = bounded.replace(/\s+/gu, " ").trim();
+	if (!clipped && measure(bounded) <= width) return bounded;
+	if (width <= 0 || measure("…") > width) return "";
+	const characters = Array.from(bounded);
+	let low = 0, high = characters.length;
+	while (low < high) {
+		const middle = Math.ceil((low + high) / 2);
+		if (measure(characters.slice(0, middle).join("") + "…") <= width) low = middle;
+		else high = middle - 1;
+	}
+	return characters.slice(0, low).join("") + "…";
 }
 
 function cellKey(column: number, row: number): string {
@@ -250,7 +271,7 @@ function labelFor(node: HistoryNodeVisual): Container {
 		text: clampText(node.title, 24),
 		style: {
 			fontFamily: "Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
-			fontSize: 16,
+			fontSize: 14,
 			fontWeight: "700",
 			fill: 0x1d1f23,
 		},
@@ -265,7 +286,12 @@ function labelFor(node: HistoryNodeVisual): Container {
 		},
 	});
 	detail.position.set(14, 66);
-	label.addChild(kind, title, detail);
+	for (const [text, value] of [[kind, node.kind.toUpperCase()], [title, node.title], [detail, node.detail]] as const) {
+		text.text = fitHistoryLabel(value, node.width - 28, (candidate) => CanvasTextMetrics.measureText(candidate, text.style).width);
+	}
+	label.addChild(kind, title);
+	if (node.height >= 80) label.addChild(detail);
+	else detail.destroy();
 	return label;
 }
 
@@ -401,7 +427,9 @@ export async function createHistoryRenderer(
 		return entry.kind === node.kind
 			&& entry.title === node.title
 			&& entry.detail === node.detail
-			&& entry.color === node.color;
+			&& entry.color === node.color
+			&& entry.width === node.width
+			&& entry.height === node.height;
 	};
 
 	const destroyCachedLabel = (id: string): void => {
@@ -427,6 +455,8 @@ export async function createHistoryRenderer(
 			title: node.title,
 			detail: node.detail,
 			color: node.color,
+			width: node.width,
+			height: node.height,
 		});
 		while (labelCache.size > MAX_CACHED_LABELS) {
 			const oldestId = labelCache.keys().next().value;

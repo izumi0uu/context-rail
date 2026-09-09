@@ -1,11 +1,14 @@
 import type { RenderState } from "./render.ts";
+import { emptyCaptureArchive, type ContextCaptureEntry, type ContextCaptureVersion } from "./context-captures.ts";
 import { projectRenderStatePatch } from "./hub-schema.ts";
 import type { ContextSnapshot } from "./snapshot.ts";
+import { immutableCopy, sameJsonValue } from "./immutable-state.ts";
 import {
 	emptyTimelineSnapshot,
 	summaryEdgeKey,
 	type HistoryItem,
 	type SummaryEdge,
+	type ContextTimelineRetention,
 } from "./timeline.ts";
 
 export interface ContextTimelinePatch {
@@ -20,6 +23,18 @@ export interface ContextTimelinePatch {
 	confirmedIds?: string[];
 	pendingIds?: string[];
 	summaryEdgeUpserts?: SummaryEdge[];
+	removedHistoryIds?: string[];
+	removedSummaryEdges?: SummaryEdge[];
+	retention?: ContextTimelineRetention | null;
+}
+
+export interface ContextCaptureArchivePatch {
+	reset?: boolean;
+	revision?: number;
+	entryUpserts?: ContextCaptureEntry[];
+	versionUpserts?: ContextCaptureVersion[];
+	removedEntryIds?: string[];
+	removedVersionIds?: string[];
 }
 
 export interface RenderStatePatch {
@@ -28,6 +43,7 @@ export interface RenderStatePatch {
 	phase?: RenderState["phase"];
 	activeTools?: string[];
 	timeline?: ContextTimelinePatch | null;
+	captures?: ContextCaptureArchivePatch | null;
 }
 
 export interface ChunkedRenderStatePatch {
@@ -37,10 +53,11 @@ export interface ChunkedRenderStatePatch {
 }
 
 function sameValue(left: unknown, right: unknown): boolean {
-	return JSON.stringify(left) === JSON.stringify(right);
+	return sameJsonValue(left, right);
 }
 
 function unchangedHistoryItem(previous: HistoryItem | undefined, next: HistoryItem): boolean {
+	if (previous === next) return true;
 	if (!previous) return false;
 	if (
 		previous.lastSeenAt !== next.lastSeenAt ||
@@ -52,7 +69,11 @@ function unchangedHistoryItem(previous: HistoryItem | undefined, next: HistoryIt
 
 function requiresTimelineReset(previous: RenderState["timeline"], next: NonNullable<RenderState["timeline"]>): boolean {
 	if (!previous) return true;
-	if (next.revision < previous.revision || next.history.length < previous.history.length) return true;
+	if (next.revision < previous.revision) return true;
+	// Managed retention has explicit deletion patches, so eviction does not
+	// resend every retained multi-megabyte history record.
+	if (next.retention) return false;
+	if (next.history.length < previous.history.length) return true;
 	const nextIds = new Set(next.history.map((item) => item.id));
 	if (previous.history.some((item) => !nextIds.has(item.id))) return true;
 	const nextEdgeKeys = new Set(next.summaryEdges.map(summaryEdgeKey));
@@ -63,10 +84,33 @@ export function diffRenderState(previous: RenderState | undefined, next: RenderS
 	const reset = previous === undefined;
 	const patch: RenderStatePatch = {
 		...(reset ? { reset: true } : {}),
-		snapshot: next.snapshot ? structuredClone(next.snapshot) : null,
+		snapshot: next.snapshot ? immutableCopy(next.snapshot) : null,
 		phase: next.phase,
 		activeTools: [...next.activeTools],
 	};
+	if (!next.captures) {
+		if (previous?.captures) patch.captures = null;
+	} else if (next.captures !== previous?.captures) {
+		const before = previous?.captures;
+		const archiveReset = !before || next.captures.revision < before.revision;
+		const previousEntries = new Set(archiveReset ? [] : before.entries.map((entry) => entry.id));
+		const previousVersions = new Set(archiveReset ? [] : before.versions.map((version) => version.versionId));
+		const nextEntries = new Set(next.captures.entries.map((entry) => entry.id));
+		const nextVersions = new Set(next.captures.versions.map((version) => version.versionId));
+		const entryUpserts = next.captures.entries.filter((entry) => !previousEntries.has(entry.id));
+		const versionUpserts = next.captures.versions.filter((version) => !previousVersions.has(version.versionId));
+		const removedEntryIds = [...previousEntries].filter((id) => !nextEntries.has(id));
+		const removedVersionIds = [...previousVersions].filter((id) => !nextVersions.has(id));
+		if (archiveReset || before.revision !== next.captures.revision || entryUpserts.length || versionUpserts.length || removedEntryIds.length || removedVersionIds.length) {
+			patch.captures = {
+				...(archiveReset ? { reset: true } : {}), revision: next.captures.revision,
+				...(entryUpserts.length ? { entryUpserts } : {}),
+				...(versionUpserts.length ? { versionUpserts } : {}),
+				...(removedEntryIds.length ? { removedEntryIds } : {}),
+				...(removedVersionIds.length ? { removedVersionIds } : {}),
+			};
+		}
+	}
 
 	if (!next.timeline) {
 		patch.timeline = null;
@@ -86,11 +130,17 @@ export function diffRenderState(previous: RenderState | undefined, next: RenderS
 		: next.timeline.summaryEdges.filter(
 			(edge) => !sameValue(previousEdges.get(summaryEdgeKey(edge)), edge),
 		);
+	const nextIds = new Set(next.timeline.history.map((item) => item.id));
+	const nextEdgeKeys = new Set(next.timeline.summaryEdges.map(summaryEdgeKey));
+	const removedHistoryIds = timelineReset ? [] : [...previousHistory.keys()].filter((id) => !nextIds.has(id));
+	const removedSummaryEdges = timelineReset ? [] : [...previousEdges].filter(([key]) => !nextEdgeKeys.has(key)).map(([, edge]) => edge);
 
 	patch.timeline = {
 		...(timelineReset ? { reset: true } : {}),
 		revision: next.timeline.revision,
-		...(historyUpserts.length > 0 ? { historyUpserts: structuredClone(historyUpserts) } : {}),
+		...(historyUpserts.length > 0 ? { historyUpserts: historyUpserts.map(immutableCopy) } : {}),
+		...(removedHistoryIds.length ? { removedHistoryIds } : {}),
+		...(removedSummaryEdges.length ? { removedSummaryEdges: removedSummaryEdges.map(immutableCopy) } : {}),
 		activeIds: [...next.timeline.activeIds],
 		enteredIds: [...next.timeline.enteredIds],
 		retainedIds: [...next.timeline.retainedIds],
@@ -98,7 +148,9 @@ export function diffRenderState(previous: RenderState | undefined, next: RenderS
 		observedIds: [...next.timeline.observedIds],
 		confirmedIds: [...next.timeline.confirmedIds],
 		pendingIds: [...next.timeline.pendingIds],
-		...(summaryEdgeUpserts.length > 0 ? { summaryEdgeUpserts: structuredClone(summaryEdgeUpserts) } : {}),
+		...(summaryEdgeUpserts.length > 0 ? { summaryEdgeUpserts: summaryEdgeUpserts.map(immutableCopy) } : {}),
+		...(next.timeline.retention ? { retention: immutableCopy(next.timeline.retention) }
+			: previous?.timeline?.retention ? { retention: null } : {}),
 	};
 	return patch;
 }
@@ -109,10 +161,26 @@ export function applyRenderStatePatch(previous: RenderState | undefined, patch: 
 		: { ...previous };
 
 	if ("snapshot" in patch) {
-		state.snapshot = patch.snapshot ? structuredClone(patch.snapshot) : undefined;
+		state.snapshot = patch.snapshot ? immutableCopy(patch.snapshot) : undefined;
 	}
 	if (patch.phase) state.phase = patch.phase;
 	if (patch.activeTools) state.activeTools = [...patch.activeTools];
+	// Captures are independent of timeline presence; do not skip this update when
+	// a capture-only viewer or older producer omits/removes the timeline.
+	if (patch.captures === null) delete state.captures;
+	else if (patch.captures) {
+		const archive = patch.captures.reset || !state.captures ? emptyCaptureArchive() : state.captures;
+		const entries = new Map(archive.entries.map((entry) => [entry.id, entry]));
+		const versions = new Map(archive.versions.map((version) => [version.versionId, version]));
+		for (const id of patch.captures.removedEntryIds ?? []) entries.delete(id);
+		for (const id of patch.captures.removedVersionIds ?? []) versions.delete(id);
+		for (const entry of patch.captures.entryUpserts ?? []) entries.set(entry.id, immutableCopy(entry));
+		for (const version of patch.captures.versionUpserts ?? []) versions.set(version.versionId, immutableCopy(version));
+		state.captures = {
+			revision: patch.captures.revision ?? archive.revision,
+			entries: [...entries.values()], versions: [...versions.values()],
+		};
+	}
 	if (patch.timeline === null) {
 		delete state.timeline;
 		return state;
@@ -123,24 +191,28 @@ export function applyRenderStatePatch(previous: RenderState | undefined, patch: 
 		? emptyTimelineSnapshot()
 		: { ...state.timeline };
 	const historyUpserts = patch.timeline.historyUpserts ?? [];
-	if (historyUpserts.length > 0) {
+	if (historyUpserts.length > 0 || patch.timeline.removedHistoryIds?.length) {
 		const history = new Map(timeline.history.map((item) => [item.id, item]));
-		for (const item of historyUpserts) history.set(item.id, structuredClone(item));
+		for (const id of patch.timeline.removedHistoryIds ?? []) history.delete(id);
+		for (const item of historyUpserts) history.set(item.id, immutableCopy(item));
 		timeline.history = [...history.values()].sort((left, right) => left.order - right.order);
 	}
 
 	const summaryEdgeUpserts = patch.timeline.summaryEdgeUpserts ?? [];
-	if (summaryEdgeUpserts.length > 0) {
+	if (summaryEdgeUpserts.length > 0 || patch.timeline.removedSummaryEdges?.length) {
 		const edges = new Map(
 			timeline.summaryEdges.map((edge) => [summaryEdgeKey(edge), edge]),
 		);
+		for (const edge of patch.timeline.removedSummaryEdges ?? []) edges.delete(summaryEdgeKey(edge));
 		for (const edge of summaryEdgeUpserts) {
-			edges.set(summaryEdgeKey(edge), structuredClone(edge));
+			edges.set(summaryEdgeKey(edge), immutableCopy(edge));
 		}
 		timeline.summaryEdges = [...edges.values()];
 	}
 
 	if (patch.timeline.revision !== undefined) timeline.revision = patch.timeline.revision;
+	if (patch.timeline.retention === null) delete timeline.retention;
+	else if (patch.timeline.retention) timeline.retention = immutableCopy(patch.timeline.retention);
 	for (const key of [
 		"activeIds",
 		"enteredIds",

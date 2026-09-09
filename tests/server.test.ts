@@ -213,6 +213,11 @@ test("serves a multi-session bootstrap and publishes authenticated updates", asy
 	assert.equal(nestedCoreAsset.status, 404);
 
 	const rendererAsset = await fetch(`${viewer.url}assets/pixi-history.js`);
+	const layoutWorker = await fetch(`${viewer.url}assets/scene-worker.js`);
+	assert.equal(layoutWorker.status, 200);
+	assert.match(layoutWorker.headers.get("content-type") ?? "", /text\/javascript/);
+	assert.match(page.headers.get("content-security-policy") ?? "", /worker-src 'self'/);
+	assert.equal((await fetch(`${viewer.url}assets/scene-worker.js.map`)).status, 404);
 	assert.equal(rendererAsset.status, 200);
 	assert.match(rendererAsset.headers.get("content-type") ?? "", /text\/javascript/);
 	assert.equal(rendererAsset.headers.get("x-content-type-options"), "nosniff");
@@ -408,8 +413,9 @@ test("re-encodes delta events from the allowlisted detail patch", async (t) => {
 	const reader = stream.body.getReader();
 	await readSse(reader, /event: bootstrap/);
 
-	const expected = state("safe-delta-model", "safe-delta-message");
-	const unsafePatch = diffRenderState(undefined, expected) as unknown as Record<string, unknown>;
+	const expected = structuredClone(state("safe-delta-model", "safe-delta-message"));
+	// Simulate mutable, untrusted wire input rather than altering immutable producer output.
+	const unsafePatch = structuredClone(diffRenderState(undefined, expected)) as unknown as Record<string, unknown>;
 	unsafePatch.content = "top-level-delta-secret";
 	const snapshot = unsafePatch.snapshot as { items: Array<Record<string, unknown>> };
 	snapshot.items[0]!.content = "snapshot-delta-secret";

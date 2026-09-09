@@ -20,6 +20,8 @@ import {
 } from "../src/hub-delta.ts";
 import type { ContextRailSessionSource } from "../src/hub-types.ts";
 import type { RenderState } from "../src/render.ts";
+import { ContextCaptureArchive } from "../src/context-captures.ts";
+import { captureContext } from "../src/snapshot.ts";
 
 interface RecordedRequest {
 	path: string;
@@ -371,6 +373,13 @@ test("coalesces queued publishes for one stream to the latest state", async (t) 
 	const first = renderState("model-v1", 1);
 	const intermediate = renderState("model-v2", 2);
 	const latest = renderState("model-v3", 3);
+	const archive = new ContextCaptureArchive();
+	for (const [index, rendered] of [first, intermediate, latest].entries()) {
+		rendered.captures = archive.append(captureContext({
+			messages: [{ id: "user", role: "user", content: `context-${index + 1}` }],
+			now: index + 1,
+		}));
+	}
 	viewer.publish(first, source());
 	await firstReceived;
 	viewer.publish(intermediate, source());
@@ -387,6 +396,9 @@ test("coalesces queued publishes for one stream to the latest state", async (t) 
 	let reconstructed: RenderState | undefined;
 	for (const patch of patches) reconstructed = applyRenderStatePatch(reconstructed, patch);
 	assert.deepEqual(reconstructed, latest);
+	assert.equal(reconstructed?.captures?.entries.length, 3, "coalescing transport must not lose producer captures");
+	assert.equal(patches[1]?.captures?.entryUpserts?.length, 2);
+	assert.equal(patches[1]?.captures?.versionUpserts?.length, 2);
 });
 
 test("retries a failed delta while idle and clears the transient unhealthy state", async (t) => {

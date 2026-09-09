@@ -1,4 +1,5 @@
 import type { RenderStatePatch } from "./hub-delta.ts";
+import type { ContextCaptureArchiveSnapshot, ContextCaptureEntry, ContextCaptureReason, ContextCaptureVersion } from "./context-captures.ts";
 import type { ContextRailSessionSource } from "./hub-types.ts";
 import type { RenderState } from "./render.ts";
 import type {
@@ -10,7 +11,18 @@ import type {
 	ContextItemKind,
 	ContextSnapshot,
 } from "./snapshot.ts";
-import type { ContextTimelineSnapshot, HistoryItem, SummaryEdge } from "./timeline.ts";
+import type { ContextTimelineSnapshot, ContextTimelineRetention, HistoryItem, SummaryEdge } from "./timeline.ts";
+import { freezeJson, isDeeplyFrozen } from "./immutable-state.ts";
+
+const detailProjectionCache = new WeakMap<object, ContextItemDetail>();
+const historyProjectionCache = new WeakMap<object, HistoryItem>();
+
+function rememberProjection<T extends object>(input: object, projected: T, cache: WeakMap<object, T>): T {
+	freezeJson(projected);
+	cache.set(projected, projected);
+	if (isDeeplyFrozen(input)) cache.set(input, projected);
+	return projected;
+}
 
 const ITEM_KINDS = new Set<ContextItemKind>([
 	"system",
@@ -134,9 +146,11 @@ function projectDetailModelMessage(value: unknown, path: string): ContextDetailM
 	};
 }
 
-function projectItemDetail(value: unknown, path: string): ContextItemDetail {
+export function projectItemDetail(value: unknown, path: string): ContextItemDetail {
 	const input = record(value, path);
-	return {
+	const cached = detailProjectionCache.get(input);
+	if (cached) return cached;
+	return rememberProjection(input, {
 		sourceRole: nonEmptyString(input.sourceRole, `${path}.sourceRole`),
 		modelMessages: projectArray(
 			input.modelMessages,
@@ -146,7 +160,7 @@ function projectItemDetail(value: unknown, path: string): ContextItemDetail {
 		...(input.isError !== undefined
 			? { isError: booleanValue(input.isError, `${path}.isError`) }
 			: {}),
-	};
+	}, detailProjectionCache);
 }
 
 function projectItem(value: unknown, path: string): ContextItem {
@@ -162,11 +176,13 @@ function projectItem(value: unknown, path: string): ContextItem {
 
 function projectHistoryItem(value: unknown, path: string): HistoryItem {
 	const input = record(value, path);
+	const cached = historyProjectionCache.get(input);
+	if (cached) return cached;
 	const item = projectItem(input, path);
 	if (input.pending !== undefined && input.pending !== true) {
 		throw new Error(`${path}.pending must be true when present`);
 	}
-	return {
+	return rememberProjection(input, {
 		...item,
 		order: nonNegativeInteger(input.order, `${path}.order`),
 		firstSeenAt: finiteNonNegative(input.firstSeenAt, `${path}.firstSeenAt`),
@@ -181,7 +197,7 @@ function projectHistoryItem(value: unknown, path: string): HistoryItem {
 		...(input.detail !== undefined
 			? { detail: projectItemDetail(input.detail, `${path}.detail`) }
 			: {}),
-	};
+	}, historyProjectionCache);
 }
 
 function projectSummaryEdge(value: unknown, path: string): SummaryEdge {
@@ -221,7 +237,7 @@ function projectSnapshot(value: unknown, path: string): ContextSnapshot {
 	};
 }
 
-function projectTimeline(value: unknown, path: string): ContextTimelineSnapshot {
+export function projectTimeline(value: unknown, path: string): ContextTimelineSnapshot {
 	const input = record(value, path);
 	return {
 		revision: nonNegativeInteger(input.revision, `${path}.revision`),
@@ -234,12 +250,79 @@ function projectTimeline(value: unknown, path: string): ContextTimelineSnapshot 
 		confirmedIds: stringArray(input.confirmedIds, `${path}.confirmedIds`),
 		pendingIds: stringArray(input.pendingIds, `${path}.pendingIds`),
 		summaryEdges: projectArray(input.summaryEdges, `${path}.summaryEdges`, projectSummaryEdge),
+		...(input.retention !== undefined ? { retention: projectRetention(input.retention, `${path}.retention`) } : {}),
+	};
+}
+
+function projectRetention(value: unknown, path: string): ContextTimelineRetention {
+	const input = record(value, path);
+	return {
+		maxItems: nonNegativeInteger(input.maxItems, `${path}.maxItems`),
+		maxBytes: nonNegativeInteger(input.maxBytes, `${path}.maxBytes`),
+		retainedItems: nonNegativeInteger(input.retainedItems, `${path}.retainedItems`),
+		retainedBytes: nonNegativeInteger(input.retainedBytes, `${path}.retainedBytes`),
+		pinnedItems: nonNegativeInteger(input.pinnedItems, `${path}.pinnedItems`),
+		pinnedBytes: nonNegativeInteger(input.pinnedBytes, `${path}.pinnedBytes`),
+		evictedItems: nonNegativeInteger(input.evictedItems, `${path}.evictedItems`),
+		evictedBytes: nonNegativeInteger(input.evictedBytes, `${path}.evictedBytes`),
+		overBudget: booleanValue(input.overBudget, `${path}.overBudget`),
+	};
+}
+
+function projectCaptureVersion(value: unknown, path: string): ContextCaptureVersion {
+	const input = record(value, path);
+	return {
+		...projectItem(input, path),
+		versionId: nonEmptyString(input.versionId, `${path}.versionId`),
+		...(input.detail !== undefined ? { detail: projectItemDetail(input.detail, `${path}.detail`) } : {}),
+	};
+}
+
+function projectCaptureEntry(value: unknown, path: string): ContextCaptureEntry {
+	const input = record(value, path);
+	if (input.source !== "context-hook" && input.source !== "session-reconstruction") {
+		throw new Error(`${path}.source must be a supported capture source`);
+	}
+	if (input.reason !== undefined && !["session-start", "session-tree", "session-compaction", "context-compaction"].includes(String(input.reason))) {
+		throw new Error(`${path}.reason must be a supported capture reason`);
+	}
+	if (input.contentStatus !== "available" && input.contentStatus !== "omitted") {
+		throw new Error(`${path}.contentStatus must be available or omitted`);
+	}
+	if (input.contentStatus === "omitted" && input.omittedReason !== "byte-limit") {
+		throw new Error(`${path}.omittedReason must be byte-limit for omitted captures`);
+	}
+	return {
+		id: nonEmptyString(input.id, `${path}.id`),
+		capturedAt: finiteNonNegative(input.capturedAt, `${path}.capturedAt`),
+		source: input.source,
+		...(input.reason !== undefined ? { reason: input.reason as ContextCaptureReason } : {}),
+		snapshot: projectSnapshot(input.snapshot, `${path}.snapshot`),
+		itemCount: nonNegativeInteger(input.itemCount, `${path}.itemCount`),
+		itemRefs: projectArray(input.itemRefs, `${path}.itemRefs`, (entry, refPath) => {
+			const ref = record(entry, refPath);
+			return {
+				itemId: nonEmptyString(ref.itemId, `${refPath}.itemId`),
+				versionId: nonEmptyString(ref.versionId, `${refPath}.versionId`),
+			};
+		}),
+		contentStatus: input.contentStatus,
+		...(input.contentStatus === "omitted" ? { omittedReason: "byte-limit" as const } : {}),
+	};
+}
+
+function projectCaptureArchive(value: unknown, path: string): ContextCaptureArchiveSnapshot {
+	const input = record(value, path);
+	return {
+		revision: nonNegativeInteger(input.revision, `${path}.revision`),
+		entries: projectArray(input.entries, `${path}.entries`, projectCaptureEntry),
+		versions: projectArray(input.versions, `${path}.versions`, projectCaptureVersion),
 	};
 }
 
 export function projectRenderState(value: unknown): RenderState {
 	const input = record(value, "state");
-	return {
+	return freezeJson({
 		snapshot: input.snapshot === undefined
 			? undefined
 			: projectSnapshot(input.snapshot, "state.snapshot"),
@@ -248,7 +331,10 @@ export function projectRenderState(value: unknown): RenderState {
 		...(input.timeline !== undefined
 			? { timeline: projectTimeline(input.timeline, "state.timeline") }
 			: {}),
-	};
+		...(input.captures !== undefined
+			? { captures: projectCaptureArchive(input.captures, "state.captures") }
+			: {}),
+	});
 }
 
 export function projectSessionSource(value: unknown): ContextRailSessionSource {
@@ -276,6 +362,18 @@ export function projectRenderStatePatch(value: unknown): RenderStatePatch {
 	if (input.activeTools !== undefined) {
 		result.activeTools = stringArray(input.activeTools, "patch.activeTools");
 	}
+	if (input.captures === null) result.captures = null;
+	else if (input.captures !== undefined) {
+		const archive = record(input.captures, "patch.captures");
+		result.captures = {
+			...(archive.reset !== undefined ? { reset: booleanValue(archive.reset, "patch.captures.reset") } : {}),
+			...(archive.revision !== undefined ? { revision: nonNegativeInteger(archive.revision, "patch.captures.revision") } : {}),
+			...(archive.entryUpserts !== undefined ? { entryUpserts: projectArray(archive.entryUpserts, "patch.captures.entryUpserts", projectCaptureEntry) } : {}),
+			...(archive.versionUpserts !== undefined ? { versionUpserts: projectArray(archive.versionUpserts, "patch.captures.versionUpserts", projectCaptureVersion) } : {}),
+			...(archive.removedEntryIds !== undefined ? { removedEntryIds: stringArray(archive.removedEntryIds, "patch.captures.removedEntryIds") } : {}),
+			...(archive.removedVersionIds !== undefined ? { removedVersionIds: stringArray(archive.removedVersionIds, "patch.captures.removedVersionIds") } : {}),
+		};
+	}
 	if (input.timeline === null) {
 		result.timeline = null;
 	} else if (input.timeline !== undefined) {
@@ -293,6 +391,15 @@ export function projectRenderStatePatch(value: unknown): RenderStatePatch {
 				"patch.timeline.historyUpserts",
 				projectHistoryItem,
 			);
+		}
+		if (timeline.removedHistoryIds !== undefined) {
+			projected.removedHistoryIds = stringArray(timeline.removedHistoryIds, "patch.timeline.removedHistoryIds");
+		}
+		if (timeline.removedSummaryEdges !== undefined) {
+			projected.removedSummaryEdges = projectArray(timeline.removedSummaryEdges, "patch.timeline.removedSummaryEdges", projectSummaryEdge);
+		}
+		if (timeline.retention !== undefined) {
+			projected.retention = timeline.retention === null ? null : projectRetention(timeline.retention, "patch.timeline.retention");
 		}
 		for (const key of [
 			"activeIds",
@@ -316,5 +423,5 @@ export function projectRenderStatePatch(value: unknown): RenderStatePatch {
 		}
 		result.timeline = projected;
 	}
-	return result;
+	return freezeJson(result);
 }

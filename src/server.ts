@@ -33,6 +33,10 @@ interface DefaultWebAsset {
 }
 
 const DEFAULT_WEB_ASSETS: ReadonlyMap<string, DefaultWebAsset> = new Map([
+	["/assets/scene-worker.js", {
+		path: fileURLToPath(new URL("../web/assets/scene-worker.js", import.meta.url)),
+		contentType: "text/javascript; charset=utf-8", optional: true,
+	}],
 	[
 		"/assets/scene-core.js",
 		{
@@ -771,7 +775,7 @@ export async function startContextRailServer(
 				response.writeHead(200, {
 					"Cache-Control": "no-store",
 					"Content-Security-Policy":
-						`default-src 'self'; connect-src 'self'; form-action 'none'; img-src 'self' data:; object-src 'none'; script-src 'self' 'nonce-${nonce}'; style-src 'self' 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'`,
+						`default-src 'self'; connect-src 'self'; worker-src 'self'; form-action 'none'; img-src 'self' data:; object-src 'none'; script-src 'self' 'nonce-${nonce}'; style-src 'self' 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'`,
 					"Content-Type": "text/html; charset=utf-8",
 					"Referrer-Policy": "no-referrer",
 					"X-Content-Type-Options": "nosniff",

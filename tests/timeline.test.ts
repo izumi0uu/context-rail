@@ -162,7 +162,8 @@ test("keeps summary edges whose delimiter-shaped ids used to collide", () => {
 test("reset clears history, active ids, and revision", () => {
 	const timeline = new ContextTimeline();
 	timeline.apply(snapshot([{ id: "user-1", kind: "user" }]));
-	assert.deepEqual(timeline.reset(), {
+	const { retention, ...reset } = timeline.reset();
+	assert.deepEqual(reset, {
 		revision: 0,
 		history: [],
 		activeIds: [],
@@ -174,4 +175,8 @@ test("reset clears history, active ids, and revision", () => {
 		pendingIds: [],
 		summaryEdges: [],
 	});
+	assert.equal(retention?.evictedItems, 0);
+	assert.equal(retention?.retainedItems, 0);
+	assert.equal(retention?.pinnedItems, 0);
+	assert.equal(retention?.overBudget, false);
 });

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { ContextCaptureArchive, type ContextCaptureReason, type ContextCaptureSource } from "./context-captures.ts";
 import { basename } from "node:path";
 import { connectContextRailHub } from "./hub-client.ts";
 import type { ContextRailSessionSource } from "./hub-types.ts";
@@ -13,7 +14,8 @@ import {
 	type ContextItemDetailFactory,
 	type ContextMessageLike,
 } from "./snapshot.ts";
-import { ContextTimeline } from "./timeline.ts";
+import { ContextTimeline, type ContextTimelineOptions } from "./timeline.ts";
+import { freezeJson, immutableCopy } from "./immutable-state.ts";
 
 const UI_KEY = "context-rail";
 const DEFAULT_MAX_SESSION_RUNTIMES = 100;
@@ -34,6 +36,7 @@ interface SessionRuntime {
 	sessionId: string;
 	sessionLabel: string;
 	timeline: ContextTimeline;
+	captures: ContextCaptureArchive;
 	identity: ContextMessageIdentity;
 	state: RenderState;
 	compactionPending: boolean;
@@ -78,16 +81,19 @@ function processLabel(ctx: ContextRailHostContext): string {
 	return basename(cwd) || `Agent ${process.pid}`;
 }
 
-function createSessionRuntime(sessionId: string, sessionLabel: string): SessionRuntime {
-	const timeline = new ContextTimeline();
+function createSessionRuntime(sessionId: string, sessionLabel: string, historyRetention?: ContextTimelineOptions): SessionRuntime {
+	const timeline = new ContextTimeline(historyRetention);
+	const captures = new ContextCaptureArchive();
 	return {
 		sessionId,
 		sessionLabel,
 		timeline,
+		captures,
 		identity: new ContextMessageIdentity(),
 		state: {
 			snapshot: undefined,
 			timeline: timeline.current(),
+			captures: captures.current(),
 			phase: "idle",
 			activeTools: [],
 		},
@@ -102,6 +108,7 @@ export interface ContextRailExtensionOptions {
 	processId?: string;
 	processState?: ContextRailProcessState;
 	maxSessionRuntimes?: number;
+	historyRetention?: ContextTimelineOptions;
 }
 
 export interface ContextRailRuntimeAdapter {
@@ -111,6 +118,8 @@ export interface ContextRailRuntimeAdapter {
 export interface ContextRailContextOptions {
 	compaction?: boolean;
 	activity?: boolean;
+	source?: ContextCaptureSource;
+	reason?: ContextCaptureReason;
 }
 
 export type ContextRailRuntimeShutdownMode = "quit" | "handoff";
@@ -152,6 +161,22 @@ export function createContextRailRuntime(
 	}
 	const processId = processState.processId;
 	const runtimes = processState.runtimes;
+	const upgradeRuntime = (runtime: SessionRuntime): void => {
+		// Pi preserves runtimes across adapter reloads. Upgrade cached inactive
+		// sessions too, before publishAll can replay an old unbounded prototype.
+		if (!(runtime.timeline instanceof ContextTimeline) || !runtime.timeline.matchesOptions(options.historyRetention)) {
+			runtime.timeline = ContextTimeline.fromSnapshot(
+				runtime.state.timeline ?? runtime.timeline.current(), options.historyRetention, runtime.timeline,
+			);
+			runtime.state.timeline = runtime.timeline.current();
+		}
+		if (!runtime.captures) {
+			runtime.captures = new ContextCaptureArchive();
+			runtime.state.captures = runtime.captures.current();
+		}
+		if (runtime.state.snapshot) runtime.state.snapshot = immutableCopy(runtime.state.snapshot);
+	};
+	for (const runtime of runtimes.values()) upgradeRuntime(runtime);
 	const detailForMessage = adapter.createContextItemDetail ?? createContextItemDetail;
 	let viewer: ContextRailViewer | undefined;
 	let viewerPromise: Promise<ContextRailViewer | undefined> | undefined;
@@ -327,9 +352,10 @@ export function createContextRailRuntime(
 		const identity = sessionIdentity(ctx);
 		let runtime = runtimes.get(identity.id);
 		if (!runtime) {
-			runtime = createSessionRuntime(identity.id, identity.label);
+			runtime = createSessionRuntime(identity.id, identity.label, options.historyRetention);
 			runtimes.set(identity.id, runtime);
 		} else {
+			upgradeRuntime(runtime);
 			runtime.sessionLabel = identity.label;
 			runtimes.delete(identity.id);
 			runtimes.set(identity.id, runtime);
@@ -429,9 +455,17 @@ export function createContextRailRuntime(
 				systemPrompt: ctx.getSystemPrompt(),
 				createContextItemDetail: detailForMessage,
 			});
-			runtime.state.snapshot = capture.snapshot;
+			runtime.state.snapshot = freezeJson(capture.snapshot);
+			const compaction = contextOptions.compaction ?? runtime.compactionPending;
+			// Capture synchronously at the producer boundary, before Hub publication
+			// can coalesce multiple intermediate contexts into one transport update.
+			runtime.state.captures = runtime.captures.append(capture, {
+				source: contextOptions.source ?? "context-hook",
+				...(contextOptions.reason ? { reason: contextOptions.reason }
+					: compaction ? { reason: "context-compaction" as const } : {}),
+			});
 			runtime.state.timeline = runtime.timeline.apply(runtime.state.snapshot, {
-				compaction: contextOptions.compaction ?? runtime.compactionPending,
+				compaction,
 				details: capture.details,
 			});
 			runtime.compactionPending = false;

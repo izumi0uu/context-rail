@@ -53,6 +53,7 @@ export interface SceneLayoutOptions {
 	nodeHeight: number;
 	compact?: boolean;
 	mobile?: boolean;
+	focusColumns?: number;
 }
 
 export interface PushTargetOptions {
@@ -87,6 +88,9 @@ const RING_START_X = 300;
 const RING_START_Y = 205;
 const RING_STEP_X = 210;
 const RING_STEP_Y = 150;
+const FOCUS_GRID_GAP_X = 30;
+const FOCUS_GRID_GAP_Y = 30;
+const MAX_FOCUS_COLUMNS = 6;
 
 function itemId(item: SceneItem): string {
 	return String(item.id);
@@ -117,11 +121,24 @@ function epochBlueprint(
 	const hub = group.find((item) => summaryTargets.has(itemId(item)));
 	const offsets = new Map<string, Point>();
 	const points: Point[] = [];
-	let ordinal = 0;
+	// Walk each ring once. Looking up every ordinal from ring zero makes a long
+	// width-capped epoch quadratic, since its later rings have constant capacity.
+	let ring = 0;
+	let ringOffset = 0;
+	let geometry = ringGeometry(ring, 760, 7);
+	let capacity = geometry.horizontal * 2 + geometry.vertical * 2;
 	for (const item of group) {
-		const offset = item === hub
-			? { x: 0, y: 0 }
-			: fourSideRingPosition(ordinal++, 760, 7).point;
+		let offset: Point;
+		if (item === hub) offset = { x: 0, y: 0 };
+		else {
+			if (ringOffset === capacity) {
+				ring += 1;
+				ringOffset = 0;
+				geometry = ringGeometry(ring, 760, 7);
+				capacity = geometry.horizontal * 2 + geometry.vertical * 2;
+			}
+			offset = perimeterPosition(ringOffset++, ring, geometry).point;
+		}
 		offsets.set(itemId(item), offset);
 		points.push(offset);
 	}
@@ -415,6 +432,26 @@ function chooseFocusHub(
 		?? activeItems[0]?.id;
 }
 
+function focusColumnCount(options: SceneLayoutOptions): number {
+	const columns = options.focusColumns ?? (options.mobile ? 2 : 6);
+	if (!Number.isFinite(columns) || columns <= 0) {
+		throw new RangeError("focusColumns must be greater than zero");
+	}
+	return Math.min(MAX_FOCUS_COLUMNS, Math.max(1, Math.floor(columns)));
+}
+
+function focusGridPosition(
+	index: number,
+	columns: number,
+	nodeWidth: number,
+	nodeHeight: number,
+): Point {
+	return {
+		x: (index % columns) * (nodeWidth + FOCUS_GRID_GAP_X),
+		y: Math.floor(index / columns) * (nodeHeight + FOCUS_GRID_GAP_Y),
+	};
+}
+
 function pendingPosition(index: number, activeBounds: Bounds, nodeHeight: number): Point {
 	const column = Math.floor(index / 8);
 	const row = index % 8;
@@ -630,21 +667,18 @@ export function buildSceneLayout(
 	}
 
 	const focusAnchor = anchors[currentEpoch] ?? epochAnchor(currentEpoch);
-	let focusOrdinal = 0;
+	const focusColumns = focusColumnCount(options);
 	const focusPoints: Point[] = [];
-	for (const id of activeIds) {
+	for (const [index, id] of activeIds.entries()) {
 		const placement = placements.get(id);
 		if (!placement) continue;
-		const focus = id === focusHubId
-			? { ...focusAnchor }
-			: (() => {
-				const offset = fourSidePosition(
-					focusOrdinal++,
-					options.compact ? 720 : options.mobile ? 820 : 1_050,
-					options.compact ? 5 : options.mobile ? 7 : 9,
-				);
-				return { x: focusAnchor.x + offset.x, y: focusAnchor.y + offset.y };
-			})();
+		const offset = focusGridPosition(
+			index,
+			focusColumns,
+			options.nodeWidth,
+			options.nodeHeight,
+		);
+		const focus = { x: focusAnchor.x + offset.x, y: focusAnchor.y + offset.y };
 		placement.focus = focus;
 		focusPoints.push(focus);
 	}
@@ -653,8 +687,8 @@ export function buildSceneLayout(
 		focusPoints.length ? focusPoints : [focusAnchor],
 		options.nodeWidth,
 		options.nodeHeight,
-		options.compact ? 72 : 120,
-		options.compact ? 46 : 98,
+		options.compact || options.mobile ? 72 : 120,
+		options.compact ? 46 : options.mobile ? 64 : 98,
 	);
 	const pendingPoints: Point[] = [];
 	for (const [index, id] of pendingIds.entries()) {

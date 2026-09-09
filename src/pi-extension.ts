@@ -145,11 +145,11 @@ function currentPiContext(ctx: PiExtensionContext): ContextMessageLike[] | undef
 function reconcileSessionContext(
 	runtime: ContextRailExtensionRuntime,
 	ctx: PiExtensionContext,
-	options: { compaction: boolean; activity: boolean },
+	options: { compaction: boolean; activity: boolean; reason: "session-start" | "session-tree" | "session-compaction" },
 ): void {
 	const messages = currentPiContext(ctx);
 	if (messages) {
-		runtime.context(messages, ctx, options);
+		runtime.context(messages, ctx, { ...options, source: "session-reconstruction" });
 		return;
 	}
 	if (options.compaction) runtime.compactionCommitted(ctx);
@@ -175,13 +175,13 @@ export function createPiContextRailExtension(
 			runtime.toolExecutionEnd(event.toolCallId, ctx),
 		);
 		pi.on("session_compact", (_event, ctx) =>
-			reconcileSessionContext(runtime, ctx, { compaction: true, activity: false }),
+			reconcileSessionContext(runtime, ctx, { compaction: true, activity: false, reason: "session-compaction" }),
 		);
 		pi.on("session_start", (_event, ctx) =>
-			reconcileSessionContext(runtime, ctx, { compaction: false, activity: false }),
+			reconcileSessionContext(runtime, ctx, { compaction: false, activity: false, reason: "session-start" }),
 		);
 		pi.on("session_tree", (_event, ctx) =>
-			reconcileSessionContext(runtime, ctx, { compaction: false, activity: false }),
+			reconcileSessionContext(runtime, ctx, { compaction: false, activity: false, reason: "session-tree" }),
 		);
 		pi.on("session_info_changed", (_event, ctx) => runtime.sessionActivated(ctx, false));
 		pi.on("session_shutdown", async (event, ctx) => {
